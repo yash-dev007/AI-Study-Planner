@@ -104,13 +104,19 @@ def _apply_delivered_minutes(
         )
 
     for allocation in allocations:
-        planned = allocation.allocated_duration_minutes
+        planned = allocation.planned_minutes
         actual = delivered.get(allocation.topic_id)
         if actual is None:
-            allocation.actual_duration_minutes = planned
+            allocation.actual_minutes = planned
             allocation.completion_status = AllocationStatus.COMPLETED
             continue
-        allocation.actual_duration_minutes = actual
+        if actual > planned:
+            warnings.append(
+                f"Reported {actual} minutes for a {planned}-minute allocation; "
+                f"the recorded actual is capped at {planned}."
+            )
+            actual = planned
+        allocation.actual_minutes = actual
         if actual == 0:
             allocation.completion_status = AllocationStatus.SKIPPED
         elif actual >= planned:
@@ -127,18 +133,18 @@ def _apply_delivered_minutes(
 def _reset_allocations(allocations: list[TopicAllocation]) -> None:
     for allocation in allocations:
         allocation.completion_status = AllocationStatus.PLANNED
-        allocation.actual_duration_minutes = None
+        allocation.actual_minutes = None
 
 
 def _remaining_work_in_session(session: LectureSession, allocations: list[TopicAllocation]) -> int:
     if session.status != SessionStatus.COMPLETED:
-        return sum(allocation.allocated_duration_minutes for allocation in allocations)
+        return sum(allocation.planned_minutes for allocation in allocations)
     remaining = 0
     for allocation in allocations:
-        delivered = allocation.actual_duration_minutes or 0
+        delivered = allocation.actual_minutes or 0
         if allocation.completion_status == AllocationStatus.SKIPPED:
             delivered = 0
-        remaining += max(0, allocation.allocated_duration_minutes - delivered)
+        remaining += max(0, allocation.planned_minutes - delivered)
     return remaining
 
 
@@ -182,7 +188,7 @@ def update_lecture_status(
         for allocation in allocations:
             if allocation.completion_status == AllocationStatus.SKIPPED:
                 continue
-            taught += allocation.actual_duration_minutes or 0
+            taught += allocation.actual_minutes or 0
         session.actual_end = session.actual_start + timedelta(
             minutes=taught or course.lecture_duration_minutes
         )
@@ -217,7 +223,7 @@ def update_lecture_status(
         entity_id=str(session.id),
         detail={
             "revision_id": str(revision.id),
-            "planned_minutes": sum(a.allocated_duration_minutes for a in allocations),
+            "planned_minutes": sum(a.planned_minutes for a in allocations),
             "delivered": {str(key): value for key, value in delivered.items()},
             "reason": payload.reason,
         },
@@ -306,7 +312,7 @@ def lecture_detail(db: Session, *, course: Course, lecture_id: uuid.UUID) -> Lec
             LectureTopicProgressRead(
                 topic_id=topic.id,
                 title=topic.title,
-                allocated_minutes=allocation.allocated_duration_minutes,
+                planned_minutes=allocation.planned_minutes,
                 estimated_minutes=topic.estimated_duration_minutes,
                 delivered_minutes_total=done,
                 remaining_minutes=max(0, topic.estimated_duration_minutes - done),
@@ -354,10 +360,10 @@ def lecture_read(session: LectureSession) -> LectureRead:
                 id=allocation.id,
                 topic_id=allocation.topic_id,
                 topic_title=allocation.topic.title if allocation.topic else "",
-                allocated_duration_minutes=allocation.allocated_duration_minutes,
+                planned_minutes=allocation.planned_minutes,
                 sequence_in_session=allocation.sequence_in_session,
                 completion_status=allocation.completion_status,
-                actual_duration_minutes=allocation.actual_duration_minutes,
+                actual_minutes=allocation.actual_minutes,
             )
             for allocation in sorted(session.allocations, key=lambda item: item.sequence_in_session)
         ],

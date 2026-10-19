@@ -51,7 +51,7 @@ def first_future_lecture(schedule: dict) -> dict:
 
 def total_allocated(schedule: dict, topic_id: str) -> int:
     return sum(
-        row["allocation"]["allocated_duration_minutes"]
+        row["allocation"]["planned_minutes"]
         for row in allocations_of(schedule, topic_id)
     )
 
@@ -156,7 +156,7 @@ def test_generate_and_approve_creates_a_published_schedule(
     assert not [issue for issue in schedule["validation_issues"] if issue["severity"] == "error"]
 
     total_planned = sum(
-        allocation["allocated_duration_minutes"]
+        allocation["planned_minutes"]
         for lecture in schedule["lectures"]
         for allocation in lecture["allocations"]
     )
@@ -381,7 +381,7 @@ def test_missed_lecture_never_duplicates_completed_work(
     remaining = {row["topic_id"]: row["remaining_minutes"] for row in progress["topics"]}
     scheduled_future = {
         topic_id: sum(
-            row["allocation"]["allocated_duration_minutes"]
+            row["allocation"]["planned_minutes"]
             for row in allocations_of(proposed, topic_id)
             if row["lecture"]["status"] == "scheduled"
         )
@@ -401,7 +401,7 @@ def test_partial_completion_keeps_the_remainder_in_the_plan(
     course_id = scheduled_course["course_id"]
     schedule = scheduled_course["schedule"]
     lecture = first_future_lecture(schedule)
-    big = max(lecture["allocations"], key=lambda item: item["allocated_duration_minutes"])
+    big = max(lecture["allocations"], key=lambda item: item["planned_minutes"])
 
     response = client.patch(
         f"{API}/courses/{course_id}/lectures/{lecture['id']}/status",
@@ -424,7 +424,7 @@ def test_partial_completion_keeps_the_remainder_in_the_plan(
         if row["lecture"]["status"] == "completed"
     ]
     assert covered and covered[0]["allocation"]["completion_status"] == "in_progress"
-    assert covered[0]["allocation"]["actual_duration_minutes"] == 30
+    assert covered[0]["allocation"]["actual_minutes"] == 30
 
     progress = client.get(f"{API}/courses/{course_id}/progress", headers=professor_headers).json()
     topic = next(row for row in progress["topics"] if row["topic_id"] == big["topic_id"])
@@ -433,11 +433,11 @@ def test_partial_completion_keeps_the_remainder_in_the_plan(
     assert topic["state"] == "in_progress"
     # The rest of the topic is still planned somewhere in the future.
     future_minutes = sum(
-        row["allocation"]["allocated_duration_minutes"]
+        row["allocation"]["planned_minutes"]
         for row in allocations_of(proposed, big["topic_id"])
         if row["lecture"]["status"] == "scheduled"
     )
-    assert future_minutes == min(big["allocated_duration_minutes"], topic["remaining_minutes"])
+    assert future_minutes == min(big["planned_minutes"], topic["remaining_minutes"])
 
 
 def test_cancelled_lecture_can_be_marked_again(
@@ -568,7 +568,7 @@ def test_recalculation_does_not_duplicate_allocations(
     for title, expected in estimates.items():
         topic = topic_id_by_title(proposal, title)
         planned = sum(
-            row["allocation"]["allocated_duration_minutes"]
+            row["allocation"]["planned_minutes"]
             for row in allocations_of(proposal, topic)
             if row["lecture"]["status"] == "scheduled"
         )

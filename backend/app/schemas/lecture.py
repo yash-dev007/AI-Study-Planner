@@ -65,7 +65,7 @@ class LectureTopicProgressRead(BaseModel):
 
     topic_id: uuid.UUID
     title: str
-    allocated_minutes: int
+    planned_minutes: int
     estimated_minutes: int
     delivered_minutes_total: int
     remaining_minutes: int

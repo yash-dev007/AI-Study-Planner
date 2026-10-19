@@ -25,10 +25,10 @@ class AllocationRead(BaseModel):
     topic_id: uuid.UUID
     topic_title: str = ""
     unit_title: str = ""
-    allocated_duration_minutes: int
+    planned_minutes: int
     sequence_in_session: int
     completion_status: AllocationStatus
-    actual_duration_minutes: int | None = None
+    actual_minutes: int | None = None
 
 
 class LectureRead(BaseModel):

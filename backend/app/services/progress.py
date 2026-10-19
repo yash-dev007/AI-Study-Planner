@@ -314,7 +314,7 @@ def build_dashboard(db: Session, *, course: Course, sessions_limit: int = 5) -> 
                 if allocation.topic is not None
             ],
             minutes=sum(
-                allocation.allocated_duration_minutes for allocation in session.allocations
+                allocation.planned_minutes for allocation in session.allocations
             ),
             status=session.status,
             minutes_remaining_in_topics=_minutes_remaining_in_topics(session, delivered_map),
@@ -436,7 +436,7 @@ def build_calendar(
                 block_reason=blocked.get(cursor, ""),
                 lectures=len(entries),
                 minutes=sum(
-                    allocation.allocated_duration_minutes
+                    allocation.planned_minutes
                     for session in entries
                     for allocation in session.allocations
                 ),
@@ -481,7 +481,7 @@ def calendar_entries(
                     if allocation.topic is not None
                 ],
                 "minutes": sum(
-                    allocation.allocated_duration_minutes for allocation in session.allocations
+                    allocation.planned_minutes for allocation in session.allocations
                 ),
                 "is_published": session.is_published,
                 "note": session.cancellation_reason or session.notes,

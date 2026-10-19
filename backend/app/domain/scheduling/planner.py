@@ -97,12 +97,12 @@ class SlotPlan:
     allocations: list[PlannedAllocation] = field(default_factory=list)
 
     @property
-    def allocated_minutes(self) -> int:
+    def planned_minutes(self) -> int:
         return sum(allocation.minutes for allocation in self.allocations)
 
     @property
     def remaining_minutes(self) -> int:
-        return self.slot.capacity_minutes - self.allocated_minutes
+        return self.slot.capacity_minutes - self.planned_minutes
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +128,7 @@ class PlannerResult:
 
     @property
     def scheduled_minutes(self) -> int:
-        return sum(plan.allocated_minutes for plan in self.slots)
+        return sum(plan.planned_minutes for plan in self.slots)
 
 
 def _validate_topics(topics: Iterable[PlannerTopic]) -> dict[UUID, PlannerTopic]:
@@ -349,7 +349,7 @@ def plan_schedule(
             capacity -= fitting_minutes
             release_dependents(fitting.id)
 
-    scheduled_minutes = sum(plan.allocated_minutes for plan in slot_plans)
+    scheduled_minutes = sum(plan.planned_minutes for plan in slot_plans)
     unplaced: list[UnplacedTopic] = []
     max_slot_capacity = max((slot.capacity_minutes for slot in ordered_slots), default=0)
     unscheduled_minutes = sum(pending.values())

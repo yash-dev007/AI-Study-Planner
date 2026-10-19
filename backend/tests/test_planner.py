@@ -68,7 +68,7 @@ class TestPlanner:
     def test_splits_long_topic_across_slots(self):
         result = plan_schedule([topic("A", 150)], slots(3))
         assert result.is_feasible
-        assert [p.allocated_minutes for p in result.slots] == [60, 60, 30]
+        assert [p.planned_minutes for p in result.slots] == [60, 60, 30]
         assert result.metrics["topic_split_count"] == 1
         assert result.metrics["expected_completion"]
 

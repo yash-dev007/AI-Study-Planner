@@ -95,13 +95,15 @@ def create_course(
 
     course = Course(
         name=payload.name.strip(),
-        course_code=payload.course_code.strip(),
+        course_code=payload.course_code.strip() if payload.course_code else None,
         professor_id=professor.id,
         department=payload.department.strip(),
         semester=payload.semester.strip(),
         academic_year=payload.academic_year.strip(),
         start_date=payload.start_date,
         end_date=payload.end_date,
+        target_completion_date=payload.target_completion_date,
+        total_available_minutes=payload.total_available_minutes,
         timezone=payload.timezone,
         status=CourseStatus.DRAFT,
         lecture_duration_minutes=payload.lecture_duration_minutes,
@@ -282,6 +284,8 @@ def update_course(
         if field in {
             "start_date",
             "end_date",
+            "target_completion_date",
+            "total_available_minutes",
             "timezone",
             "lecture_duration_minutes",
             "total_weeks",

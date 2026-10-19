@@ -284,9 +284,9 @@ def _allocation_delivered_minutes(allocation: TopicAllocation) -> int:
         return 0
     if allocation.completion_status not in DELIVERED_STATUSES:
         return 0
-    if allocation.actual_duration_minutes is not None:
-        return max(0, allocation.actual_duration_minutes)
-    return max(0, allocation.allocated_duration_minutes)
+    if allocation.actual_minutes is not None:
+        return max(0, allocation.actual_minutes)
+    return max(0, allocation.planned_minutes)
 
 
 def delivered_minutes(sessions: list[LectureSession]) -> dict[uuid.UUID, int]:
@@ -416,7 +416,7 @@ def _preserve_future_sessions(
             available = max(
                 0, topic.estimated_duration_minutes - planned_committed.get(topic.id, 0)
             )
-            if available < allocation.allocated_duration_minutes:
+            if available < allocation.planned_minutes:
                 blocked = True
                 break
             for prerequisite_id in state.prerequisites.get(topic.id, frozenset()):
@@ -449,13 +449,13 @@ def _preserve_future_sessions(
             allocations.append(
                 PlannedAllocation(
                     topic_id=allocation.topic_id,
-                    minutes=allocation.allocated_duration_minutes,
+                    minutes=allocation.planned_minutes,
                     sequence_in_session=allocation.sequence_in_session or sequence,
                 )
             )
             planned_committed[allocation.topic_id] = (
                 planned_committed.get(allocation.topic_id, 0)
-                + allocation.allocated_duration_minutes
+                + allocation.planned_minutes
             )
 
         result.preseeded[slot.index] = allocations
@@ -663,7 +663,7 @@ def _result_from_sessions(sessions: list[LectureSession]) -> PlannerResult:
             plan.allocations.append(
                 PlannedAllocation(
                     topic_id=allocation.topic_id,
-                    minutes=allocation.allocated_duration_minutes,
+                    minutes=allocation.planned_minutes,
                     sequence_in_session=allocation.sequence_in_session,
                 )
             )
@@ -809,9 +809,9 @@ def _persist_revision(
                     TopicAllocation(
                         lecture_session_id=clone.id,
                         topic_id=allocation.topic_id,
-                        allocated_duration_minutes=allocation.allocated_duration_minutes,
+                        planned_minutes=allocation.planned_minutes,
                         completion_status=allocation_status,
-                        actual_duration_minutes=allocation.actual_duration_minutes,
+                        actual_minutes=allocation.actual_minutes,
                         sequence_in_session=allocation.sequence_in_session,
                     )
                 )
@@ -845,7 +845,7 @@ def _persist_revision(
                 TopicAllocation(
                     lecture_session_id=session.id,
                     topic_id=planned.topic_id,
-                    allocated_duration_minutes=planned.minutes,
+                    planned_minutes=planned.minutes,
                     completion_status=AllocationStatus.PLANNED,
                     sequence_in_session=planned.sequence_in_session,
                 )
@@ -1245,9 +1245,9 @@ def rollback_to_revision(
                 TopicAllocation(
                     lecture_session_id=clone.id,
                     topic_id=allocation.topic_id,
-                    allocated_duration_minutes=allocation.allocated_duration_minutes,
+                    planned_minutes=allocation.planned_minutes,
                     completion_status=allocation.completion_status,
-                    actual_duration_minutes=allocation.actual_duration_minutes,
+                    actual_minutes=allocation.actual_minutes,
                     sequence_in_session=allocation.sequence_in_session,
                 )
             )
@@ -1331,10 +1331,10 @@ def build_schedule_read(
                 topic_id=allocation.topic_id,
                 topic_title=allocation.topic.title if allocation.topic else "",
                 unit_title="",
-                allocated_duration_minutes=allocation.allocated_duration_minutes,
+                planned_minutes=allocation.planned_minutes,
                 sequence_in_session=allocation.sequence_in_session,
                 completion_status=allocation.completion_status,
-                actual_duration_minutes=allocation.actual_duration_minutes,
+                actual_minutes=allocation.actual_minutes,
             )
             for allocation in sorted(session.allocations, key=lambda item: item.sequence_in_session)
         ]

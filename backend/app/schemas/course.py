@@ -79,12 +79,14 @@ class CourseSettings(BaseModel):
 
 class CourseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    course_code: str = Field(min_length=1, max_length=50)
+    course_code: str | None = Field(default=None, max_length=50)
     department: str = Field(default="", max_length=150)
     semester: str = Field(default="", max_length=50)
     academic_year: str = Field(default="", max_length=20)
     start_date: date
     end_date: date
+    target_completion_date: date | None = None
+    total_available_minutes: int | None = Field(default=None, gt=0)
     timezone: str = DEFAULT_TIMEZONE
     lecture_duration_minutes: int = Field(default=60, ge=15, le=300)
     total_weeks: int = Field(default=16, ge=1, le=52)
@@ -96,6 +98,10 @@ class CourseCreate(BaseModel):
     def validate_dates(self) -> CourseCreate:
         if self.end_date < self.start_date:
             raise ValueError("The semester end date must not precede the start date.")
+        if self.target_completion_date is not None and not (
+            self.start_date <= self.target_completion_date <= self.end_date
+        ):
+            raise ValueError("The target completion date must fall within the semester.")
         return self
 
 
@@ -103,12 +109,14 @@ class CourseUpdate(BaseModel):
     """Partial update. ``version`` guards against concurrent edits."""
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    course_code: str | None = Field(default=None, min_length=1, max_length=50)
+    course_code: str | None = Field(default=None, max_length=50)
     department: str | None = Field(default=None, max_length=150)
     semester: str | None = Field(default=None, max_length=50)
     academic_year: str | None = Field(default=None, max_length=20)
     start_date: date | None = None
     end_date: date | None = None
+    target_completion_date: date | None = None
+    total_available_minutes: int | None = Field(default=None, gt=0)
     timezone: str | None = None
     lecture_duration_minutes: int | None = Field(default=None, ge=15, le=300)
     total_weeks: int | None = Field(default=None, ge=1, le=52)
@@ -125,12 +133,14 @@ class CourseRead(BaseModel):
     id: uuid.UUID
     professor_id: uuid.UUID
     name: str
-    course_code: str
+    course_code: str | None
     department: str
     semester: str
     academic_year: str
     start_date: date
     end_date: date
+    target_completion_date: date | None = None
+    total_available_minutes: int | None = None
     timezone: str
     status: CourseStatus
     lecture_duration_minutes: int

@@ -31,7 +31,7 @@ Single source of truth for phase progress. Update after every gate.
 | Phase | Scope | Status | Gate result |
 |---|---|---|---|
 | 0 | Baseline stabilization and build contract | **DONE** | 125 tests, ruff, mypy green; Git initialized; contract written |
-| 1 | Schema, migrations, configuration contracts | PENDING | — |
+| 1 | Schema, migrations, configuration contracts | **DONE** — 131 tests, migration up/down, schema drift test | — |
 | 2 | Authentication, profile, settings | PENDING | — |
 | 3 | Subject and syllabus management | PENDING | — |
 | 4 | PDF import, normalization, preview | PENDING | — |
@@ -44,6 +44,25 @@ Single source of truth for phase progress. Update after every gate.
 | 11 | React foundation | PENDING | — |
 | 12 | React feature slices | PENDING | — |
 | 13 | E2E acceptance, docs, cleanup | PENDING | — |
+
+## Phase 1 gate — 2026-10-19
+
+- Added `user_settings`, `topic_suggestions`, `email_deliveries`.
+- Extended `users` (department, college, timezone, token version), `courses`
+  (optional code, target completion date, total available minutes),
+  `syllabus_units` (unit cap, archive), `topics` (original name, analysis
+  status, approval, archive, duration lock), and `lecture_sessions` (source,
+  reschedule provenance, idempotency key).
+- Renamed allocation columns to `planned_minutes` / `actual_minutes` and added
+  database checks: planned > 0, actual ≥ 0, actual ≤ planned.
+- Added `PRAGMA busy_timeout=5000`; FK cascade and rollback tests added.
+- Migration `b61a99d968ce` round-trips (`upgrade head` → `downgrade base`) and a
+  drift test proves migrated columns equal model-declared columns.
+- Contracts frozen in `docs/DATA_MODEL.md` and `docs/API_CONTRACT.md`.
+- Deviation recorded: `difficulty` stays a three-level label mapped to a
+  numeric allocation score (easy 2, medium 3, hard 4) instead of a new 1–5
+  column; `end_date` stays required and `target_completion_date` is the
+  optional goal date.
 
 ## Known limitations (tracked)
 
