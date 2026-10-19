@@ -1,0 +1,48 @@
+# --- secrets ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+
+# --- local data ------------------------------------------------------------
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/data/
+backend/storage/
+!backend/data/.gitkeep
+!backend/storage/.gitkeep
+
+# --- node / frontend -------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# --- os / editors ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

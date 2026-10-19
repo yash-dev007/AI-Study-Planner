@@ -1,0 +1,45 @@
+from app.domain.scheduling.calendar import (
+    AvailabilityWindow,
+    CalendarBlock,
+    CalendarConfigurationError,
+    OccupiedInterval,
+    build_slots,
+    count_available_sessions,
+    resolve_timezone,
+)
+from app.domain.scheduling.diff import ChangeRecord, ScheduleDiff, diff_results
+from app.domain.scheduling.planner import (
+    DependencyCycleError,
+    InvalidTopicError,
+    PlannerResult,
+    PlannerSlot,
+    PlannerTopic,
+    SchedulingError,
+    SlotPlan,
+    UnplacedTopic,
+    plan_schedule,
+    validate_plan,
+)
+
+__all__ = [
+    "AvailabilityWindow",
+    "CalendarBlock",
+    "CalendarConfigurationError",
+    "ChangeRecord",
+    "DependencyCycleError",
+    "InvalidTopicError",
+    "OccupiedInterval",
+    "PlannerResult",
+    "PlannerSlot",
+    "PlannerTopic",
+    "ScheduleDiff",
+    "SchedulingError",
+    "SlotPlan",
+    "UnplacedTopic",
+    "build_slots",
+    "count_available_sessions",
+    "diff_results",
+    "plan_schedule",
+    "resolve_timezone",
+    "validate_plan",
+]

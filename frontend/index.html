@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Adaptive Syllabus &amp; Lecture Planning</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#view">Skip to content</a>
+
+  <div id="app" data-state="loading">
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="topbar__logo" aria-hidden="true">AS</span>
+        <div>
+          <strong>Adaptive Syllabus</strong>
+          <span class="topbar__sub">Lecture planning for professors</span>
+        </div>
+      </div>
+
+      <div class="topbar__actions">
+        <button type="button" class="icon-button" id="notifications-button" title="Notifications">
+          <span aria-hidden="true">🔔</span>
+          <span class="badge badge--count" id="notifications-count" hidden>0</span>
+          <span class="visually-hidden">Notifications</span>
+        </button>
+        <div class="user-chip" id="user-chip" hidden>
+          <span id="user-name"></span>
+          <button type="button" class="btn btn--ghost btn--small" id="logout-button">Sign out</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="sidebar" id="sidebar" aria-label="Course sections" hidden>
+        <div class="sidebar__course" id="sidebar-course"></div>
+        <ul class="sidebar__nav" id="sidebar-nav"></ul>
+        <button type="button" class="btn btn--ghost btn--small sidebar__back" id="all-courses">
+          ← All courses
+        </button>
+      </nav>
+
+      <main class="content" id="view" tabindex="-1">
+        <div class="loading-state">Loading…</div>
+      </main>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+  <div class="modal-root" id="modal-root" hidden></div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
