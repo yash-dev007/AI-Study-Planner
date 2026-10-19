@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.errors import register_exception_handlers
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.csrf import CookieCsrfMiddleware
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.db.session import Base, engine
 from app.services.bootstrap import seed_defaults
@@ -58,6 +59,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Registered before CORS so that CORS wraps this guard and decorates its
+    # rejection responses with the headers a browser client needs to read them.
+    app.add_middleware(CookieCsrfMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

@@ -26,13 +26,17 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: uuid.UUID, role: str) -> tuple[str, int]:
+def create_access_token(
+    user_id: uuid.UUID, role: str, token_version: int = 0
+) -> tuple[str, int]:
     expires_in = settings.access_token_expire_minutes * 60
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "role": role,
         "type": "access",
+        # Bumped on password change; tokens with an older version are rejected.
+        "ver": token_version,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=expires_in)).timestamp()),
     }

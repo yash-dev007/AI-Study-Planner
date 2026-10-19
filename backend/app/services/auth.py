@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.security import create_access_token, hash_password, verify_password
-from app.models.entities import Course, User, UserRole
+from app.models.entities import Course, User, UserRole, UserSettings
 
 
 def _find_by_email(db: Session, email: str) -> User | None:
@@ -19,7 +19,17 @@ def _find_by_email(db: Session, email: str) -> User | None:
     ).scalar_one_or_none()
 
 
-def register_user(db: Session, *, name: str, email: str, password: str, role: UserRole) -> User:
+def register_user(
+    db: Session,
+    *,
+    name: str,
+    email: str,
+    password: str,
+    role: UserRole,
+    department: str = "",
+    college_name: str = "",
+    timezone: str = "UTC",
+) -> User:
     if _find_by_email(db, email) is not None:
         raise ConflictError(
             "An account with this email already exists.", code="EMAIL_ALREADY_REGISTERED"
@@ -29,8 +39,13 @@ def register_user(db: Session, *, name: str, email: str, password: str, role: Us
         email=email.strip().lower(),
         password_hash=hash_password(password),
         role=role,
+        department=department.strip(),
+        college_name=college_name.strip(),
+        timezone=timezone,
     )
     db.add(user)
+    db.flush()
+    db.add(UserSettings(user_id=user.id))
     db.flush()
     return user
 
@@ -42,9 +57,42 @@ def authenticate(db: Session, *, email: str, password: str) -> tuple[User, str, 
     if not user.is_active:
         raise ForbiddenError("This account has been deactivated.", code="ACCOUNT_INACTIVE")
     user.last_login_at = datetime.now(UTC)
-    token, expires_in = create_access_token(user.id, str(user.role))
+    token, expires_in = create_access_token(user.id, str(user.role), user.token_version)
     db.flush()
     return user, token, expires_in
+
+
+def update_profile(
+    db: Session,
+    *,
+    user: User,
+    name: str | None = None,
+    department: str | None = None,
+    college_name: str | None = None,
+    timezone: str | None = None,
+) -> User:
+    if name is not None:
+        user.name = name.strip()
+    if department is not None:
+        user.department = department.strip()
+    if college_name is not None:
+        user.college_name = college_name.strip()
+    if timezone is not None:
+        user.timezone = timezone
+    db.flush()
+    return user
+
+
+def change_password(
+    db: Session, *, user: User, current_password: str, new_password: str
+) -> User:
+    if not verify_password(current_password, user.password_hash):
+        raise UnauthorizedError("The current password is incorrect.", code="WRONG_PASSWORD")
+    user.password_hash = hash_password(new_password)
+    # Invalidate every previously issued token for this teacher.
+    user.token_version += 1
+    db.flush()
+    return user
 
 
 def get_user(db: Session, user_id: uuid.UUID) -> User:

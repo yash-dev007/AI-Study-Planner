@@ -32,7 +32,7 @@ Single source of truth for phase progress. Update after every gate.
 |---|---|---|---|
 | 0 | Baseline stabilization and build contract | **DONE** | 125 tests, ruff, mypy green; Git initialized; contract written |
 | 1 | Schema, migrations, configuration contracts | **DONE** — 131 tests, migration up/down, schema drift test | — |
-| 2 | Authentication, profile, settings | PENDING | — |
+| 2 | Authentication, profile, settings | **DONE** | 167 tests, ruff, mypy green |
 | 3 | Subject and syllabus management | PENDING | — |
 | 4 | PDF import, normalization, preview | PENDING | — |
 | 5 | AI-assisted analysis and providers | PENDING | — |
@@ -63,6 +63,38 @@ Single source of truth for phase progress. Update after every gate.
   numeric allocation score (easy 2, medium 3, hard 4) instead of a new 1–5
   column; `end_date` stays required and `target_completion_date` is the
   optional goal date.
+
+## Phase 2 gate — 2026-10-19
+
+- Register and login set an HttpOnly, `SameSite=Lax` session cookie (Secure in
+  production). Bearer tokens remain accepted and take precedence over a stale
+  cookie, so API clients and tests are unaffected.
+- `POST /auth/logout` clears the cookie. `PATCH /auth/profile` updates name,
+  department, college, and timezone. `POST /auth/change-password` verifies the
+  current password, increments `token_version` (revoking every prior token with
+  `401 TOKEN_REVOKED`), and rotates the cookie in the same response.
+- `app/core/csrf.py` guards cookie-authenticated unsafe requests: `Origin`,
+  falling back to `Referer` or `Sec-Fetch-Site: same-origin`, must match the
+  request host or a configured CORS origin. Foreign, missing, and `null`
+  origins get `403 CSRF_REJECTED`. Login and registration are exempt because
+  they establish the session; Bearer requests are exempt by construction.
+  The guard is registered before `CORSMiddleware` so CORS headers decorate its
+  responses.
+- `GET/PUT /settings` persist per-teacher lecture defaults, teaching days,
+  weekly email preference, and AI preference. Responses expose only
+  configuration booleans (`openrouter_configured`, `ollama_configured`,
+  `smtp_configured`); keys and passwords never leave the server.
+- 36 new tests across `tests/test_auth_profile.py` and `tests/test_settings.py`,
+  covering cookie flags, CSRF accept/reject paths, password rotation, token
+  revocation, duplicate email, secret non-disclosure, defaults, validation, and
+  cross-user isolation. `test_unauthorized_course_access_is_forbidden` now
+  clears the cookie jar before asserting anonymous access, because registration
+  legitimately establishes a session.
+- Gate: `.venv/bin/python -m pytest` → **167 passed**;
+  `.venv/bin/ruff check app tests` → clean;
+  `.venv/bin/mypy app` → clean (59 files).
+- Deferred by scope: `POST /settings/test-email` and weekly-summary sending
+  belong to Phase 10; `POST /settings/test-ai` belongs to Phase 5.
 
 ## Known limitations (tracked)
 

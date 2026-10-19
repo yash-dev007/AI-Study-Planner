@@ -736,6 +736,9 @@ def test_unauthorized_course_access_is_forbidden(
         assert response.status_code == 403, url
         assert response.json()["error"]["code"] == "COURSE_FORBIDDEN"
 
+    # Phase 2: registration also stores a session cookie, so a truly
+    # anonymous request must start from a clean cookie jar.
+    client.cookies.clear()
     anonymous = client.get(f"{API}/courses/{course_id}")
     assert anonymous.status_code == 401
 

@@ -10,11 +10,14 @@ The UI calls this entity **Subject**; the API keeps the implementation name
 
 - JSON request and response bodies.
 - All routes require authentication except `register`, `login`, and `health`.
-- Current authentication: `Authorization: Bearer <token>`. Phase 2 adds an
-  HttpOnly cookie while retaining Bearer support for tests and API clients.
+- Authentication: `Authorization: Bearer <token>` **or** an HttpOnly,
+  `SameSite=Lax` session cookie set by login/register. Bearer wins when both are
+  present. Cookie-authenticated unsafe methods require a same-origin `Origin`
+  (or `Referer`); foreign origins get `403 CSRF_REJECTED`.
 - Ownership failures return `404` so another teacher's records are not
   disclosed.
-- List responses use `{ items, total, limit, offset }` (`Page[T]`).
+- List responses use `{ items, meta: { total, limit, offset, has_more } }`
+  (`Page[T]`).
 - Errors use a consistent envelope:
 
 ```json
@@ -35,9 +38,22 @@ Common statuses: `400`, `401`, `403`, `404`, `409`, `413`, `422`, `429`, `500`.
 ### Auth
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/auth/register` | name, email, password, role |
-| POST | `/auth/login` | returns access token + user |
+| POST | `/auth/register` | creates the account, sets the session cookie |
+| POST | `/auth/login` | returns access token + user, sets the session cookie |
+| POST | `/auth/logout` | clears the session cookie (`204`) |
 | GET | `/auth/me` | current profile |
+| PATCH | `/auth/profile` | name, department, college, timezone |
+| POST | `/auth/change-password` | bumps `token_version`, revokes old tokens |
+
+### Settings
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/settings` | per-teacher defaults and preferences |
+| PUT | `/settings` | partial update; validates minutes, weekdays, provider |
+
+Settings responses include configuration booleans only
+(`openrouter_configured`, `ollama_configured`, `smtp_configured`); secrets are
+never returned.
 
 ### Subjects (`courses`)
 | Method | Path | Notes |
@@ -111,9 +127,7 @@ automatic publish.
 
 These are contracts, not yet implemented:
 
-- Auth/profile: `POST /auth/logout`, `PATCH /auth/profile`,
-  `POST /auth/change-password`; cookie login.
-- Settings: `GET/PUT /settings`, `POST /settings/test-email`,
+- Settings: `POST /settings/test-email`,
   `POST /settings/test-ai`, `POST /settings/weekly-summary/send-test`.
 - Syllabus: `PUT /courses/{id}/syllabus` bulk save, unit CRUD, reorder,
   `POST .../analyze`, `GET .../analysis`, `POST .../analysis/approve`.

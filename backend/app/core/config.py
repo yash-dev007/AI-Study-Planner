@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production-please-use-a-long-random-value"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 480
+    access_token_cookie: str = "access_token"
+
+    # SMTP is optional: with no host the weekly email feature reports as
+    # "not configured" and every other feature keeps working.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_use_tls: bool = True
 
     # NoDecode: pydantic-settings would otherwise JSON-decode this field before
     # validation, which breaks the documented comma-separated form and rejects
@@ -117,6 +127,14 @@ class Settings(BaseSettings):
         if self.llm_provider == "openrouter":
             return bool(self.openrouter_api_key)
         return self.llm_provider in {"ollama"}
+
+    @property
+    def openrouter_configured(self) -> bool:
+        return bool(self.openrouter_api_key)
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from)
 
 
 @lru_cache

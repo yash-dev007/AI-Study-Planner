@@ -27,16 +27,32 @@ def get_current_user(
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ) -> User:
-    if credentials is None or not credentials.credentials:
+    token: str | None = None
+    via_cookie = False
+    if credentials is not None and credentials.credentials:
+        token = credentials.credentials
+    else:
+        cookie = request.cookies.get(settings.access_token_cookie)
+        if cookie:
+            token = cookie
+            via_cookie = True
+    if not token:
         raise UnauthorizedError("Authentication is required.", code="NOT_AUTHENTICATED")
-    payload = decode_access_token(credentials.credentials)
+
+    payload = decode_access_token(token)
     try:
         user_id = uuid.UUID(str(payload["sub"]))
     except (KeyError, ValueError) as exc:
         raise UnauthorizedError("Invalid authentication token.", code="INVALID_TOKEN") from exc
     user = get_user(db, user_id)
+    if int(payload.get("ver", 0)) != int(user.token_version):
+        raise UnauthorizedError(
+            "This session was signed out by a password change. Please sign in again.",
+            code="TOKEN_REVOKED",
+        )
     request.state.user_id = user.id
     request.state.role = str(user.role)
+    request.state.auth_via_cookie = via_cookie
     return user
 
 
