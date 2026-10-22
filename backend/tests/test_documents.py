@@ -1,4 +1,4 @@
-"""Document ingestion tests: validation, PDF/DOCX/TXT extraction, and OCR paths."""
+"""Document ingestion tests: validation, PDF/DOCX/TXT extraction, and corrupt input."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import io
 
 import pytest
 from app.core.errors import DocumentProcessingError
-from app.documents import extractor
 from app.documents.extractor import extract_text, sanitize_text, validate_upload
 
 SAMPLE = """\
@@ -110,7 +109,6 @@ def test_text_file_is_decoded() -> None:
     result = extract_text("syllabus.txt", "text/plain", SAMPLE.encode("utf-8"))
     assert result.page_count == 0, "a text file has no pages"
     assert "Unit 1" in result.text
-    assert result.ocr_used is False
 
 
 def test_utf16_text_file_is_decoded() -> None:
@@ -153,59 +151,30 @@ def test_corrupted_docx_is_reported() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_pdf_text_layer_is_used_without_ocr() -> None:
+def test_pdf_text_layer_is_used() -> None:
     result = extract_text("syllabus.pdf", "application/pdf", make_pdf([SAMPLE]))
     assert result.page_count == 1
     assert "Unit 1" in result.text
-    assert result.ocr_used is False
-    assert result.ocr_pages == []
 
 
-def test_image_only_pdf_without_ocr_fails_with_actionable_error() -> None:
-    """The host has no Tesseract, so a scanned PDF must fail loudly, not silently."""
+def test_image_only_pdf_fails_with_actionable_error() -> None:
+    """A scanned or image-only PDF with no embedded text must fail with a clear actionable error."""
 
     with pytest.raises(DocumentProcessingError) as excinfo:
         extract_text("scanned.pdf", "application/pdf", make_pdf(["", ""]))
-    assert excinfo.value.code == "OCR_UNAVAILABLE"
-    assert "scanned" in excinfo.value.message.lower()
-    assert excinfo.value.details["reason"]
+    assert excinfo.value.code == "NO_TEXT_EXTRACTED"
+    assert "no readable text" in excinfo.value.message.lower()
 
 
-def test_scanned_pdf_uses_ocr_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(extractor, "_ocr_available", lambda: (True, ""))
-    monkeypatch.setattr(
-        extractor,
-        "_ocr_pages_individually",
-        lambda data, pages: [SAMPLE for _ in pages],
-    )
-    result = extract_text("scanned.pdf", "application/pdf", make_pdf(["", ""]))
-    assert result.ocr_used is True
-    assert result.ocr_pages == [0, 1]
-    assert "Unit 1" in result.text
-
-
-def test_mixed_pdf_degrades_gracefully_when_ocr_is_missing() -> None:
-    """One readable page is enough to continue; the unreadable one is a warning."""
+def test_mixed_pdf_extracts_readable_pages() -> None:
+    """Readable pages are extracted even if some pages have no text."""
 
     result = extract_text("mixed.pdf", "application/pdf", make_pdf([SAMPLE, ""]))
     assert "Unit 1" in result.text
-    assert result.ocr_used is False
-    assert result.warnings, "the professor must be told that a page could not be read"
-    assert "OCR" in result.warnings[0]
-
-
-def test_page_with_little_text_is_flagged_when_ocr_is_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "ocr_enabled", False)
-    result = extract_text("mixed.pdf", "application/pdf", make_pdf([SAMPLE, ""]))
-    assert any("OCR is disabled" in warning for warning in result.warnings)
+    assert result.page_count == 2
 
 
 def test_blank_pdf_is_rejected() -> None:
     with pytest.raises(DocumentProcessingError) as excinfo:
         extract_text("blank.pdf", "application/pdf", make_pdf([""]))
-    # OCR is unavailable here, so the honest outcome is a clear OCR error.
-    assert excinfo.value.code in {"OCR_UNAVAILABLE", "NO_TEXT_EXTRACTED"}
+    assert excinfo.value.code == "NO_TEXT_EXTRACTED"

@@ -91,6 +91,30 @@ def update_course(
     return course_service.course_detail(db, updated)
 
 
+@router.delete(
+    "/{course_id}",
+    response_model=MessageResponse,
+    summary="Delete a course and all associated data",
+)
+def delete_course(
+    course: CourseDep, db: DbSession, user: CurrentUser
+) -> MessageResponse:
+    course_name = course.name
+    course_id = course.id
+    course_service.delete_course(db, course=course, actor_id=user.id)
+    record_audit(
+        db,
+        user_id=user.id,
+        course_id=None,
+        action="course.deleted",
+        entity_type="course",
+        entity_id=str(course_id),
+        detail={"name": course_name},
+    )
+    db.commit()
+    return MessageResponse(message=f"Course '{course_name}' and all associated data deleted.")
+
+
 @router.put(
     "/{course_id}/availability",
     response_model=list[AvailabilityRuleRead],

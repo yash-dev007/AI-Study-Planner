@@ -15,10 +15,11 @@ import {
 } from "../dom.js";
 import {
   dateLabel,
+  dateOnlyLabel,
   minutesLabel,
   percentLabel,
   relativeDays,
-  shortDate,
+  shortDateOnly,
   timeOfDay,
   weekdayIndex,
   weekdayName,
@@ -168,7 +169,7 @@ export async function render(ctx) {
       }),
       stat({
         label: "Semester ends",
-        value: dashboard.semester_end ? dateLabel(dashboard.semester_end, tz) : "—",
+        value: dashboard.semester_end ? dateOnlyLabel(dashboard.semester_end) : "—",
         hint: `${dashboard.days_remaining} day(s) remaining`,
       }),
     );
@@ -330,7 +331,7 @@ export function renderCalendar(calendar, tz) {
       el(
         "div",
         { class: `calendar__day ${kind}`, title: day.block_reason || "" },
-        el("div", { class: "calendar__date", text: shortDate(`${day.date}T00:00:00Z`, tz) }),
+        el("div", { class: "calendar__date", text: shortDateOnly(day.date) }),
         day.is_blocked
           ? el("div", { class: "calendar__note", text: day.block_reason || "No teaching" })
           : null,

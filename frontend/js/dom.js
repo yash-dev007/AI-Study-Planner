@@ -229,9 +229,22 @@ export function openModal({ title, body, actions = [], onClose }) {
               class: `btn${action.kind ? ` btn--${action.kind}` : ""}`,
               type: "button",
               text: action.label,
-              onClick: async () => {
-                const result = await action.onClick?.();
-                if (result !== false) close();
+              onClick: async (event) => {
+                const control = event.currentTarget;
+                if (control.disabled) return;
+                // A slow request must not be started twice by an impatient click.
+                const hadFocus = document.activeElement === control;
+                let keepOpen = false;
+                control.disabled = true;
+                try {
+                  const result = await action.onClick?.();
+                  if (result !== false) close();
+                  else keepOpen = true;
+                } finally {
+                  control.disabled = false;
+                  // Disabling blurred the button; return focus when the dialog stayed open.
+                  if (keepOpen && hadFocus && control.isConnected) control.focus();
+                }
               },
             }),
           ),
@@ -240,7 +253,27 @@ export function openModal({ title, body, actions = [], onClose }) {
   );
 
   dialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") close();
+    if (event.key === "Escape") {
+      close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    // Keep keyboard focus inside the dialog; the page behind it is unavailable.
+    const focusable = Array.from(
+      dialog.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((node) => node.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
   root.append(dialog);
   root.hidden = false;

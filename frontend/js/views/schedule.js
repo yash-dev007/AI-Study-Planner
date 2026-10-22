@@ -19,7 +19,7 @@ import {
   toast,
 } from "../dom.js";
 import { STRATEGY_OPTIONS, defaultStrategy } from "../strategies.js";
-import { dateLabel, minutesLabel, percentLabel, timeOfDay } from "../format.js";
+import { dateLabel, dateOnlyLabel, dateTimeLabel, minutesLabel, percentLabel, timeOfDay } from "../format.js";
 
 const STATUS_BADGE = { scheduled: "accent", completed: "ok", missed: "danger", cancelled: "" };
 
@@ -80,9 +80,9 @@ export async function render(ctx) {
   if (!revision) {
     blocks.push(
       emptyState(
-        "This course has no timetable yet. Confirm the syllabus, then generate one.",
-        "Open the syllabus",
-        () => ctx.navigate(`#/courses/${courseId}/syllabus`),
+        "This course has no timetable yet. Generate one from the confirmed syllabus.",
+        "Generate schedule",
+        () => generate(),
       ),
     );
     mount(ctx.root, blocks);
@@ -132,7 +132,7 @@ export async function render(ctx) {
         `Revision ${revision.revision_number} is the current timetable`,
         el("p", {
           text: revision.published_at
-            ? `Published ${new Date(revision.published_at).toLocaleString()}.`
+            ? `Published ${dateTimeLabel(revision.published_at, tz)}.`
             : "Approved; notifications were sent only after your approval.",
         }),
       ),
@@ -218,7 +218,7 @@ export async function render(ctx) {
             lecture.allocations.length
               ? lecture.allocations.map((allocation) =>
                   el("div", {
-                    text: `${allocation.topic_title} · ${minutesLabel(allocation.allocated_duration_minutes)}${
+                    text: `${allocation.topic_title} · ${minutesLabel(allocation.planned_minutes)}${
                       allocation.completion_status !== "planned"
                         ? ` (${allocation.completion_status.replace("_", " ")})`
                         : ""
@@ -244,7 +244,6 @@ export async function render(ctx) {
 
   async function generate() {
     const strategy = select(STRATEGY_OPTIONS, { value: defaultStrategy(ctx.course) });
-    const publish = el("input", { type: "checkbox" });
     const errorBox = el("div", { hidden: true });
     const dialog = openModal({
       title: "Generate the timetable",
@@ -255,14 +254,6 @@ export async function render(ctx) {
           text: "Topics are placed in your teaching windows, holidays and exams are respected, and prerequisites stay in order.",
         }),
         field("Planning strategy", strategy),
-        el(
-          "label",
-          { class: "field field--check" },
-          publish,
-          el("span", {
-            text: "Publish immediately when it succeeds (otherwise it waits for your approval)",
-          }),
-        ),
         errorBox,
       ),
       actions: [
@@ -273,7 +264,6 @@ export async function render(ctx) {
             try {
               const result = await api.generateSchedule(courseId, {
                 strategy: strategy.value,
-                auto_publish: publish.checked,
               });
               toast(result.message || "Schedule generated.", "ok");
               await render(ctx);
@@ -432,7 +422,7 @@ async function renderProposal(ctx, courseId, revision, schedule) {
       stat({
         label: "Trigger",
         value: revision.trigger_type.replaceAll("_", " "),
-        hint: new Date(revision.created_at).toLocaleString(),
+        hint: dateTimeLabel(revision.created_at, ctx.timezone),
       }),
     ),
     notice(
@@ -484,8 +474,8 @@ function showLedger(ctx, revision, ledger) {
               el("div", { class: "notice__title", text: `${entry.change_type.replace("_", " ")}` }),
               el("div", {
                 text: `${entry.topic_id ? `Topic ${entry.topic_id.slice(0, 8)} · ` : ""}${
-                  entry.previous_date ? `${dateLabel(entry.previous_date, ctx.timezone)} → ` : ""
-                }${entry.new_date ? dateLabel(entry.new_date, ctx.timezone) : ""}`,
+                  entry.previous_date ? `${dateOnlyLabel(entry.previous_date)} → ` : ""
+                }${entry.new_date ? dateOnlyLabel(entry.new_date) : ""}`,
               }),
               el("div", { class: "timeline__meta", text: entry.change_reason }),
             ),

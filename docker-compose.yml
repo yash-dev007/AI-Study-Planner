@@ -35,8 +35,11 @@ services:
       SEED_DEMO_DATA: "false"
       LLM_PROVIDER: ${LLM_PROVIDER:-none}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.0-flash-001}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OCR_ENABLED: ${OCR_ENABLED:-true}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     volumes:
       # The UI is static files: mount them instead of rebuilding the image.

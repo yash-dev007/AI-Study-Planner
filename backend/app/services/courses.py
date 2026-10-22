@@ -302,6 +302,13 @@ def update_course(
         raise ValidationFailedError(
             "The semester end date must not precede the start date.", code="INVALID_DATE_RANGE"
         )
+    if course.target_completion_date is not None and not (
+        course.start_date <= course.target_completion_date <= course.end_date
+    ):
+        raise ValidationFailedError(
+            "The target completion date must fall within the semester.",
+            code="INVALID_TARGET_DATE",
+        )
 
     course.version += 1
     db.flush()
@@ -329,14 +336,21 @@ def course_detail(db: Session, course: Course) -> CourseDetail:
             select(func.count())
             .select_from(Topic)
             .join(SyllabusUnit, Topic.unit_id == SyllabusUnit.id)
-            .where(SyllabusUnit.course_id == course.id)
+            .where(
+                SyllabusUnit.course_id == course.id,
+                SyllabusUnit.archived_at.is_(None),
+                Topic.archived_at.is_(None),
+            )
         ).scalar_one()
     )
     unit_count = int(
         db.execute(
             select(func.count())
             .select_from(SyllabusUnit)
-            .where(SyllabusUnit.course_id == course.id)
+            .where(
+                SyllabusUnit.course_id == course.id,
+                SyllabusUnit.archived_at.is_(None),
+            )
         ).scalar_one()
     )
     has_approved = (
@@ -380,3 +394,18 @@ def course_with_structure(db: Session, course_id: uuid.UUID) -> Course:
     if course is None:
         raise NotFoundError("Course not found.", code="COURSE_NOT_FOUND")
     return course
+
+
+def delete_course(db: Session, *, course: Course, actor_id: uuid.UUID) -> None:
+    """Delete a course and all related units, topics, sessions, revisions, and files."""
+
+    from app.core.config import settings
+
+    syllabi_dir = settings.storage_dir / "syllabi" / str(course.id)
+    if syllabi_dir.exists():
+        import shutil
+
+        shutil.rmtree(syllabi_dir, ignore_errors=True)
+
+    db.delete(course)
+    db.flush()

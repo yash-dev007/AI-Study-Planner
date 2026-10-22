@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <a class="skip-link" href="#view">Skip to content</a>
+  <a class="skip-link" href="#view" id="skip-link">Skip to content</a>
 
   <div id="app" data-state="loading">
     <header class="topbar">
@@ -20,6 +20,10 @@
       </div>
 
       <div class="topbar__actions">
+        <button type="button" class="icon-button" id="settings-button" title="AI & Settings">
+          <span aria-hidden="true">⚙️</span>
+          <span class="visually-hidden">AI Settings</span>
+        </button>
         <button type="button" class="icon-button" id="notifications-button" title="Notifications">
           <span aria-hidden="true">🔔</span>
           <span class="badge badge--count" id="notifications-count" hidden>0</span>

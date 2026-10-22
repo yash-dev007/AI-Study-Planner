@@ -27,6 +27,26 @@ const userChip = document.getElementById("user-chip");
 const userName = document.getElementById("user-name");
 const notificationBadge = document.getElementById("notifications-count");
 
+let isHydrating = false;
+let isRedirectingToLogin = false;
+
+/**
+ * End the local session and send the user to the sign-in screen.
+ *
+ * The cookie is HttpOnly, so the frontend cannot inspect it; the API is the
+ * only authority on whether the session is still alive.
+ */
+function handleUnauthorized() {
+  session.clear();
+  renderSidebar(null);
+  if (isHydrating) return;
+  if (isRedirectingToLogin) return;
+  if (parseRoute(window.location.hash).name === "login") return;
+  isRedirectingToLogin = true;
+  toast("Your session expired. Please sign in again.", "error");
+  navigate("#/login");
+}
+
 const COURSE_SECTIONS = [
   { key: "", label: "Dashboard" },
   { key: "syllabus", label: "Syllabus" },
@@ -44,6 +64,7 @@ function parseRoute(hash) {
   if (segments[0] === "login") return { name: "login", params: {} };
   if (segments[0] === "register") return { name: "register", params: {} };
   if (segments[0] === "notifications") return { name: "notifications", params: {} };
+  if (segments[0] === "settings") return { name: "settings", params: {} };
   if (segments[0] === "courses") {
     if (segments[1] === "new") return { name: "course-new", params: {} };
     if (!segments[1]) return { name: "courses", params: {} };
@@ -100,7 +121,7 @@ function renderSidebar(course) {
 }
 
 async function refreshNotificationBadge() {
-  if (!session.token) {
+  if (!session.user) {
     notificationBadge.hidden = true;
     return;
   }
@@ -202,14 +223,15 @@ async function renderCourseChrome(courseId) {
 
 async function handleRoute() {
   const route = parseRoute(window.location.hash);
+  if (route.name === "login") isRedirectingToLogin = false;
   const requiresSession = !["login", "register"].includes(route.name);
 
-  if (requiresSession && !session.token) {
+  if (requiresSession && !session.user) {
     navigate("#/login");
     return;
   }
 
-  userChip.hidden = !session.token;
+  userChip.hidden = !session.user;
   if (session.user) {
     mount(userName, session.user.name || session.user.email);
   }
@@ -246,6 +268,10 @@ async function handleRoute() {
         renderSidebar(null);
         await historyView.renderNotifications(ctx);
         break;
+      case "settings":
+        renderSidebar(null);
+        await settingsView.renderUserSettings(ctx);
+        break;
       case "course-dashboard":
       case "course-syllabus":
       case "course-schedule":
@@ -276,9 +302,7 @@ async function handleRoute() {
     }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      session.clear();
-      toast("Your session expired. Please sign in again.", "error");
-      navigate("#/login");
+      handleUnauthorized();
       return;
     }
     mount(view, el("h1", { text: "Something went wrong" }), errorState(error));
@@ -289,24 +313,59 @@ async function handleRoute() {
   }
 }
 
-function boot() {
-  document.getElementById("logout-button").addEventListener("click", () => {
+/**
+ * Resolve who is signed in from the session cookie. The cached user only makes
+ * the first paint fast; it is never proof that the server session still exists.
+ */
+async function hydrateSession() {
+  isHydrating = true;
+  try {
+    session.save(await api.me());
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) session.clear();
+    // Any other failure (e.g. offline) keeps the cached identity for this paint.
+  } finally {
+    isHydrating = false;
+  }
+}
+
+async function boot() {
+  window.addEventListener("auth:unauthorized", handleUnauthorized);
+  document.getElementById("logout-button").addEventListener("click", async () => {
+    try {
+      await api.logout();
+    } catch {
+      // The server session may already be gone; clear the browser state anyway.
+    }
     session.clear();
     renderSidebar(null);
     toast("Signed out.", "info");
     navigate("#/login");
   });
   document.getElementById("all-courses").addEventListener("click", () => navigate("#/courses"));
+  document.getElementById("skip-link")?.addEventListener("click", (event) => {
+    // The router owns the URL hash; focusing the main region must not look like
+    // a route change (which used to render the not-found page).
+    event.preventDefault();
+    view.focus();
+  });
+  document.getElementById("settings-button")?.addEventListener("click", () => navigate("#/settings"));
   document
     .getElementById("notifications-button")
     .addEventListener("click", () => showNotifications());
 
   window.addEventListener("hashchange", handleRoute);
+
+  const route = parseRoute(window.location.hash);
+  if (!["login", "register"].includes(route.name)) {
+    await hydrateSession();
+  }
+
   handleRoute();
 
   // Keep the unread badge fresh without hammering the API.
   window.setInterval(() => {
-    if (session.token && !document.hidden) refreshNotificationBadge();
+    if (session.user && !document.hidden) refreshNotificationBadge();
   }, 60000);
 }
 

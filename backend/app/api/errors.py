@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.domain.scheduling import SchedulingError
 from app.schemas.common import ErrorBody, ErrorResponse
@@ -83,7 +84,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(IntegrityError)
     async def _integrity_error(_: Request, exc: IntegrityError) -> JSONResponse:
-        logger.warning("Database constraint violation: %s", exc)
+        # Log the driver message only: the SQLAlchemy wrapper embeds statement
+        # parameters, which can include password hashes.
+        logger.warning(
+            "Database constraint violation: %s",
+            getattr(exc, "orig", None) or type(exc).__name__,
+        )
         return _envelope(
             status_code=status.HTTP_409_CONFLICT,
             code="CONSTRAINT_VIOLATION",
@@ -95,7 +101,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(SQLAlchemyError)
     async def _database_error(_: Request, exc: SQLAlchemyError) -> JSONResponse:
-        logger.exception("Database error", exc_info=exc)
+        # Parameters can contain secrets (password hashes); only include the
+        # full traceback when debug logging was explicitly requested.
+        logger.error(
+            "Database error: %s",
+            getattr(exc, "orig", None) or type(exc).__name__,
+            exc_info=exc if settings.debug else None,
+        )
         return _envelope(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             code="DATABASE_ERROR",

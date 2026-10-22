@@ -349,13 +349,6 @@ def test_service_clamps_durations_to_the_configured_band() -> None:
     assert topics["Tiny"].estimated_duration_minutes == settings.min_topic_minutes
 
 
-def test_ocr_text_lowers_confidence_and_asks_for_review() -> None:
-    outcome = SyllabusExtractionService(settings).extract(SYLLABUS_TEXT, ocr_used=True)
-    topics = [topic for unit in outcome.extraction.units for topic in unit.topics]
-    assert topics
-    assert all(topic.confidence <= 0.75 for topic in topics)
-    assert any("OCR" in warning for warning in outcome.warnings)
-
 
 def test_llm_output_is_validated_by_schema() -> None:
     with pytest.raises(ValidationError):
@@ -477,3 +470,21 @@ def test_unresolvable_prerequisites_are_flagged_not_scheduled() -> None:
     assert topic.prerequisite_keys == [], "an unknown reference never becomes a dependency"
     assert topic.needs_review is True
     assert any("Calculus I" in warning for warning in outcome.warnings)
+
+
+def test_refine_without_llm_raises_validation_error() -> None:
+    from app.core.errors import ValidationFailedError
+
+    service = SyllabusExtractionService(settings, llm=None)
+    extraction = RULE_BASED.extract("Unit 1: Unit\nTopic 1: Topic A\n")
+    with pytest.raises(ValidationFailedError) as exc_info:
+        service.refine(extraction, "Split Topic A into two")
+    assert exc_info.value.code == "AI_NOT_CONFIGURED"
+
+
+def test_refine_with_llm_modifies_structure(mock_llm: MockLLMInterpreter) -> None:
+    service = SyllabusExtractionService(settings, llm=mock_llm)
+    extraction = mock_llm.extract("sample text")
+    outcome = service.refine(extraction, "Add advanced concurrency")
+    assert outcome.used_llm is True
+    assert "Prompted: Add advanced concurrency" in outcome.extraction.units[0].topics[0].title

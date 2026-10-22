@@ -45,6 +45,7 @@ def test_settings_defaults_match_the_service_configuration(
     assert body["ai_enabled"] is False
     assert body["preferred_ai_provider"] == "none"
     assert body["preferred_ai_model"] == ""
+    assert body["ai_config_writable"] is True
     assert body["internet_required"] is False
     assert body["openrouter_configured"] == bool(settings.openrouter_api_key)
     assert body["smtp_configured"] == settings.smtp_configured
@@ -198,3 +199,59 @@ def test_settings_are_isolated_between_teachers(client: TestClient) -> None:
 def test_settings_require_authentication(client: TestClient) -> None:
     assert client.get(f"{API}/settings").status_code == 401
     assert client.put(f"{API}/settings", json={"ai_enabled": True}).status_code == 401
+    assert (
+        client.post(f"{API}/settings/ai-config", json={"provider": "openrouter"}).status_code
+        == 401
+    )
+    assert (
+        client.post(f"{API}/settings/ai-test", json={"provider": "openrouter"}).status_code
+        == 401
+    )
+
+
+def test_ai_config_endpoint_persists_settings(
+    client: TestClient,
+    professor_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The endpoint mutates process-wide Settings; restore them afterwards so an
+    # enabled provider cannot leak into later tests.
+    for attribute in ("llm_provider", "openrouter_api_key", "openrouter_model"):
+        monkeypatch.setattr(settings, attribute, getattr(settings, attribute))
+    response = client.post(
+        f"{API}/settings/ai-config",
+        json={
+            "provider": "openrouter",
+            "api_key": "sk-or-v1-testkey12345",
+            "model": "google/gemini-2.0-flash-001",
+        },
+        headers=professor_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["provider"] == "openrouter"
+    assert body["model"] == "google/gemini-2.0-flash-001"
+    assert body["openrouter_configured"] is True
+    assert body["llm_enabled"] is True
+    assert body["ai_config_writable"] is True
+
+    # Check that settings GET reflects updated status
+    settings_body = _get(client, professor_headers)
+    assert settings_body["ai_enabled"] is True
+    assert settings_body["preferred_ai_provider"] == "openrouter"
+    assert settings_body["openrouter_configured"] is True
+
+
+def test_ai_test_endpoint_without_key_reports_clean_error(
+    client: TestClient, professor_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
+    response = client.post(
+        f"{API}/settings/ai-test",
+        json={"provider": "openrouter", "api_key": ""},
+        headers=professor_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "No OpenRouter API key" in body["message"]

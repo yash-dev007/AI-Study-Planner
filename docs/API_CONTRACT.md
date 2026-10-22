@@ -48,12 +48,16 @@ Common statuses: `400`, `401`, `403`, `404`, `409`, `413`, `422`, `429`, `500`.
 ### Settings
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/settings` | per-teacher defaults and preferences |
-| PUT | `/settings` | partial update; validates minutes, weekdays, provider |
+| GET | `/settings` | per-teacher defaults and preferences; `ai_config_writable` is `false` when provider keys are environment-only |
+| PUT | `/settings` | partial update; validates minutes, weekdays, provider; also enables AI per teacher |
+| POST | `/settings/ai-config` | set provider/model/API key from the UI (writes `backend/.env`; server-wide effect). Rejected with `403 AI_CONFIG_UI_DISABLED` in production: keys are provisioned through the environment there. |
+| POST | `/settings/ai-test` | reachability probe for the selected provider |
 
 Settings responses include configuration booleans only
-(`openrouter_configured`, `ollama_configured`, `smtp_configured`); secrets are
-never returned.
+(`openrouter_configured`, `gemini_configured`, `ollama_configured`,
+`smtp_configured`); secrets are never returned. In production the UI uses
+`ai_config_writable=false` to hide the key form and offers per-teacher AI
+enablement through `PUT /settings` instead.
 
 ### Subjects (`courses`)
 | Method | Path | Notes |
@@ -62,6 +66,7 @@ never returned.
 | GET | `/courses` | paginated list, optional `status`, `search` |
 | GET | `/courses/{course_id}` | detail with rules, exceptions, counts |
 | PATCH | `/courses/{course_id}` | partial update; `version` guards concurrency |
+| DELETE | `/courses/{course_id}` | delete the subject, its syllabus, schedule, and lecture history (irreversible) |
 | PUT | `/courses/{course_id}/availability` | replace weekly windows |
 | POST | `/courses/{course_id}/exceptions` | add holiday/exam/unavailable date |
 | DELETE | `/courses/{course_id}/exceptions/{exception_id}` | remove exception |
@@ -74,12 +79,21 @@ Subject fields include `course_code` (optional), `target_completion_date`,
 | Method | Path | Notes |
 |---|---|---|
 | POST | `/courses/{course_id}/syllabus/upload` | PDF/DOCX/TXT |
+| POST | `/courses/{course_id}/syllabus/text` | extract a preview from pasted text (no file) |
 | GET | `/courses/{course_id}/syllabus` | documents |
 | GET | `/courses/{course_id}/syllabus/documents/{document_id}/preview` | editable extraction |
+| POST | `/courses/{course_id}/syllabus/documents/{document_id}/refine` | prompt-driven AI refinement of the preview (422 `AI_NOT_CONFIGURED` when AI is off; the preview is preserved) |
+| PUT | `/courses/{course_id}/syllabus` | full-editor save; existing rows are updated, never deleted |
 | POST | `/courses/{course_id}/syllabus/confirm` | persist reviewed preview |
 | GET | `/courses/{course_id}/syllabus/structure` | confirmed units/topics |
+| POST | `/courses/{course_id}/syllabus/units` | add a unit |
+| PATCH | `/courses/{course_id}/syllabus/units/{unit_id}` | rename, re-cap, archive, restore |
+| DELETE | `/courses/{course_id}/syllabus/units/{unit_id}` | delete, or archive when history exists (`?archive=true`) |
+| POST | `/courses/{course_id}/syllabus/units/reorder` | validate then apply atomically (`dry_run` supported) |
+| POST | `/courses/{course_id}/syllabus/units/{unit_id}/topics` | add a topic |
+| POST | `/courses/{course_id}/syllabus/units/{unit_id}/topics/reorder` | reorder topics within a unit |
 | PATCH | `/courses/{course_id}/syllabus/topics/{topic_id}` | edit topic |
-| DELETE | `/courses/{course_id}/syllabus/topics/{topic_id}` | delete/guard history |
+| DELETE | `/courses/{course_id}/syllabus/topics/{topic_id}` | delete, or archive when history exists |
 
 ### Schedule
 | Method | Path | Notes |
@@ -128,9 +142,8 @@ automatic publish.
 These are contracts, not yet implemented:
 
 - Settings: `POST /settings/test-email`,
-  `POST /settings/test-ai`, `POST /settings/weekly-summary/send-test`.
-- Syllabus: `PUT /courses/{id}/syllabus` bulk save, unit CRUD, reorder,
-  `POST .../analyze`, `GET .../analysis`, `POST .../analysis/approve`.
+  `POST /settings/weekly-summary/send-test`.
+- Syllabus: `POST .../analyze`, `GET .../analysis`, `POST .../analysis/approve`.
 - Allocation: `POST /courses/{id}/allocation/preview`,
   `POST /courses/{id}/allocation/approve`.
 - Lectures: `POST /courses/{id}/lectures/{lecture_id}/complete`,
@@ -143,7 +156,13 @@ These are contracts, not yet implemented:
 - Durations are integer minutes everywhere. No `hours` or float fields.
 - `delivered_minutes` must not exceed the allocation's planned minutes; the
   service caps and warns rather than storing an impossible value.
-- Revision approval is explicit. `auto_publish_reschedules` defaults to false.
+- Revision approval is explicit. `auto_publish_reschedules` defaults to false;
+  generate/recalculate requests cannot publish, and approval is a separate call.
+- AI is opt-in per teacher: an upload is sent to a provider only when that
+  teacher's `ai_enabled` is true, their preferred provider is configured, and
+  the server holds the matching key. Otherwise the rule-based extractor runs.
+- `timezone` must be a valid IANA zone; unknown zones are a `422` validation
+  error rather than a persisted value that breaks scheduling.
 - All date-time fields are ISO 8601 with UTC offsets.
 - Secrets are write-only environment configuration; API responses expose only
   booleans such as `openrouter_configured` and `smtp_configured`.

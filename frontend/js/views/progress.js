@@ -22,7 +22,7 @@ import {
   isoDate,
   minutesLabel,
   percentLabel,
-  shortDate,
+  shortDateOnly,
   todayIso,
   weekdayIndex,
 } from "../format.js";
@@ -285,7 +285,7 @@ function renderCalendarGrid(calendar, tz) {
       el(
         "div",
         { class: `calendar__day ${kind}`, title: day.block_reason || "" },
-        el("div", { class: "calendar__date", text: shortDate(`${day.date}T00:00:00Z`, tz) }),
+        el("div", { class: "calendar__date", text: shortDateOnly(day.date) }),
         day.is_blocked ? el("div", { class: "calendar__note", text: day.block_reason || "No teaching" }) : null,
         day.lectures
           ? el("div", {

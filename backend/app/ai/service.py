@@ -16,8 +16,13 @@ from app.ai.llm import SyllabusInterpreter
 from app.ai.rule_based import RuleBasedInterpreter, detect_injection_attempts, reference_parts
 from app.ai.schemas import SyllabusExtraction
 from app.core.config import Settings
+from app.core.errors import ValidationFailedError
 
 logger = logging.getLogger(__name__)
+
+# Matches the API request schema for the refine endpoint (schemas/syllabus.py);
+# enforced here too so the service cannot be used as an unbounded-prompt sink.
+MAX_REFINE_PROMPT_CHARS = 4_000
 
 
 @dataclass
@@ -35,8 +40,11 @@ def _clamp_durations(extraction: SyllabusExtraction, settings: Settings) -> None
                 settings.min_topic_minutes,
                 min(settings.max_topic_minutes, topic.estimated_duration_minutes),
             )
-            topic.estimated_duration_minutes = (
-                int(round(minutes / 15.0) * 15) or settings.min_topic_minutes
+            rounded = int(round(minutes / 15.0) * 15) or settings.min_topic_minutes
+            # Re-clamp: rounding to the 15-minute grid can overshoot a maximum that
+            # is not itself a multiple of 15.
+            topic.estimated_duration_minutes = max(
+                settings.min_topic_minutes, min(settings.max_topic_minutes, rounded)
             )
 
 
@@ -119,7 +127,8 @@ def _break_cycles(extraction: SyllabusExtraction) -> list[str]:
         return []
 
     warnings = []
-    for key in unprocessed:
+    # Sorted so the same document always produces the same warning order.
+    for key in sorted(unprocessed):
         topic = topics[key]
         removed = [p for p in topic.prerequisite_keys if p in unprocessed]
         if removed:
@@ -138,7 +147,7 @@ class SyllabusExtractionService:
         self._llm = llm
         self._fallback = RuleBasedInterpreter()
 
-    def extract(self, text: str, *, ocr_used: bool = False) -> ExtractionOutcome:
+    def extract(self, text: str) -> ExtractionOutcome:
         warnings: list[str] = []
         extraction: SyllabusExtraction | None = None
         used_llm = False
@@ -147,6 +156,10 @@ class SyllabusExtractionService:
             try:
                 extraction = self._llm.extract(text)
                 used_llm = True
+                # Provider-authored prose and labels are untrusted: a successful
+                # LLM call must not be able to inject text into the teacher's UI.
+                extraction.warnings = []
+                extraction.provider = self._llm.name
                 warnings.append(
                     f"Syllabus structure interpreted with the '{self._llm.name}' provider."
                 )
@@ -172,16 +185,6 @@ class SyllabusExtractionService:
         _clamp_durations(extraction, self._settings)
         extraction.warnings = list(extraction.warnings) + warnings
 
-        if ocr_used:
-            for unit in extraction.units:
-                for topic in unit.topics:
-                    topic.confidence = min(topic.confidence, 0.75)
-                    if topic.confidence < 0.65:
-                        topic.needs_review = True
-            extraction.warnings.append(
-                "Text was recovered with OCR, so extraction confidence is reduced."
-            )
-
         injection_findings = detect_injection_attempts(text)
         if injection_findings:
             extraction.warnings.append(
@@ -191,7 +194,58 @@ class SyllabusExtractionService:
 
         return ExtractionOutcome(
             extraction=extraction,
-            provider=extraction.provider if not used_llm else self._llm.name,  # type: ignore[union-attr]
+            provider=extraction.provider,
             used_llm=used_llm,
+            warnings=extraction.warnings,
+        )
+
+    def refine(self, current: SyllabusExtraction, prompt: str) -> ExtractionOutcome:
+        """Modify an existing extraction structure according to the professor's prompt."""
+
+        if self._llm is None:
+            raise ValidationFailedError(
+                "No AI provider is configured. Configure a provider in Settings "
+                "(or set OPENROUTER_API_KEY, GEMINI_API_KEY, or OLLAMA in backend/.env) "
+                "to use prompt-based syllabus editing.",
+                code="AI_NOT_CONFIGURED",
+            )
+
+        instruction = (prompt or "").strip()
+        if not instruction:
+            raise ValidationFailedError(
+                "Describe the change you want before asking AI to refine the syllabus.",
+                code="INVALID_PROMPT",
+            )
+        if len(instruction) > MAX_REFINE_PROMPT_CHARS:
+            raise ValidationFailedError(
+                f"The refinement prompt exceeds the {MAX_REFINE_PROMPT_CHARS}-character limit.",
+                code="INVALID_PROMPT",
+            )
+
+        try:
+            extraction = self._llm.refine(current, instruction)
+        except Exception as exc:
+            logger.warning("LLM prompt refinement failed: %s", exc)
+            raise ValidationFailedError(
+                f"AI refinement failed: {exc}. Your current syllabus preview was preserved.",
+                code="AI_REFINEMENT_FAILED",
+            ) from exc
+
+        # Same containment as extraction: the model does not get to write the
+        # warnings the professor reads.
+        extraction.warnings = []
+        extraction.provider = self._llm.name
+        warnings: list[str] = [
+            f"Syllabus structure refined using the '{self._llm.name}' provider."
+        ]
+        warnings.extend(_resolve_prerequisites(extraction))
+        warnings.extend(_break_cycles(extraction))
+        _clamp_durations(extraction, self._settings)
+        extraction.warnings = list(extraction.warnings) + warnings
+
+        return ExtractionOutcome(
+            extraction=extraction,
+            provider=self._llm.name,
+            used_llm=True,
             warnings=extraction.warnings,
         )

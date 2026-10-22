@@ -77,13 +77,14 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["meta"], summary="Liveness and configuration probe")
     def health() -> JSONResponse:
+        # Unauthenticated probe: report liveness and coarse configuration only.
+        # Filesystem paths and secrets are never exposed here.
         return JSONResponse(
             {
                 "status": "ok",
                 "environment": settings.app_env,
                 "llm_provider": settings.llm_provider,
                 "llm_enabled": settings.llm_enabled,
-                "storage_dir": str(settings.storage_dir),
             }
         )
 

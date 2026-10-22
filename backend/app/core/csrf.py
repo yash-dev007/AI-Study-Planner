@@ -56,6 +56,19 @@ def _normalized_origin(value: str | None) -> str | None:
     return f"{scheme}://{host}:{port}"
 
 
+def _is_bearer_request(headers: Headers) -> bool:
+    """True only when the header carries a real Bearer credential.
+
+    ``deps.get_current_user`` falls back to the session cookie whenever the
+    ``Authorization`` header has no usable Bearer credentials (empty, another
+    scheme, or a scheme without a token). Exempting those requests from CSRF
+    would let a cookie-authenticated write skip the origin check.
+    """
+
+    scheme, _, credentials = headers.get("authorization", "").partition(" ")
+    return scheme.lower() == "bearer" and bool(credentials.strip())
+
+
 def _has_session_cookie(cookie_header: str) -> bool:
     if not cookie_header:
         return False
@@ -122,7 +135,7 @@ class CookieCsrfMiddleware:
             return
 
         headers = Headers(scope=scope)
-        if headers.get("authorization"):
+        if _is_bearer_request(headers):
             # Bearer authentication is explicit and not vulnerable to CSRF.
             await self.app(scope, receive, send)
             return

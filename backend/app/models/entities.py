@@ -274,6 +274,12 @@ class Course(TimestampMixin, Base):
     revisions: Mapped[list[ScheduleRevision]] = relationship(
         back_populates="course", cascade="all, delete-orphan"
     )
+    documents: Mapped[list[SyllabusDocument]] = relationship(
+        back_populates="course", cascade="all, delete-orphan"
+    )
+    notifications: Mapped[list[Notification]] = relationship(
+        back_populates="course", cascade="all, delete-orphan"
+    )
 
 
 class SyllabusDocument(TimestampMixin, Base):
@@ -297,7 +303,7 @@ class SyllabusDocument(TimestampMixin, Base):
     error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
     extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    course: Mapped[Course] = relationship()
+    course: Mapped[Course] = relationship(back_populates="documents")
 
 
 class SyllabusUnit(TimestampMixin, Base):
@@ -678,6 +684,8 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    course: Mapped[Course | None] = relationship(back_populates="notifications")
 
 
 class EmailDelivery(TimestampMixin, Base):

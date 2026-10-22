@@ -18,8 +18,9 @@ import {
   textarea,
   toast,
 } from "../dom.js";
-import { WEEKDAY_OPTIONS, dateLabel, todayIso, weekdayName } from "../format.js";
+import { WEEKDAY_OPTIONS, dateOnlyLabel, todayIso, weekdayName } from "../format.js";
 import { defaultStrategy } from "../strategies.js";
+import { buildAiConfigCard } from "./ai_config.js";
 
 const EXCEPTION_OPTIONS = [
   { value: "holiday", label: "Holiday" },
@@ -42,6 +43,13 @@ export async function render(ctx) {
   const course = await api.getCourse(courseId);
   const tz = course.timezone;
   const settings = course.settings || {};
+
+  let userSettings = {};
+  try {
+    userSettings = await api.getSettings();
+  } catch {
+    userSettings = {};
+  }
 
   /* ------------------------------------------------------------ course details */
 
@@ -228,6 +236,7 @@ export async function render(ctx) {
               { class: "inline-form" },
               select(WEEKDAY_OPTIONS, {
                 value: rule.weekday,
+                "aria-label": "Teaching day",
                 onChange: (event) => {
                   rule.weekday = Number(event.target.value);
                 },
@@ -235,6 +244,7 @@ export async function render(ctx) {
               input({
                 type: "time",
                 value: rule.start_time,
+                "aria-label": "Start time",
                 onChange: (event) => {
                   rule.start_time = event.target.value;
                 },
@@ -242,6 +252,7 @@ export async function render(ctx) {
               input({
                 type: "time",
                 value: rule.end_time,
+                "aria-label": "End time",
                 onChange: (event) => {
                   rule.end_time = event.target.value;
                 },
@@ -249,6 +260,7 @@ export async function render(ctx) {
               input({
                 placeholder: "Room",
                 value: rule.room,
+                "aria-label": "Room",
                 onChange: (event) => {
                   rule.room = event.target.value;
                 },
@@ -325,7 +337,7 @@ export async function render(ctx) {
           { label: "" },
         ],
         exceptions.map((exception) => [
-          dateLabel(`${exception.date}T00:00:00Z`, tz),
+          dateOnlyLabel(exception.date),
           badge(exception.exception_type, exception.exception_type === "exam" ? "warn" : ""),
           exception.description || "—",
           exception.blocks_teaching ? "Yes" : "No",
@@ -439,6 +451,17 @@ export async function render(ctx) {
     ),
 
     el("div", { class: "card" }, el("div", { class: "card__head" }, el("h2", { text: "Details and behaviour" })), detailsForm),
+    el(
+      "div",
+      { class: "card" },
+      el(
+        "div",
+        { class: "card__head" },
+        el("h2", { text: "🤖 AI Configuration" }),
+        el("span", { class: "muted", text: "Choose the provider, model, and whether your syllabus uploads use AI." }),
+      ),
+      buildAiConfigCard(userSettings, () => render(ctx)),
+    ),
 
     el(
       "div",
@@ -504,6 +527,41 @@ export async function render(ctx) {
         ),
       ),
     ),
+
+    el(
+      "div",
+      { class: "card", style: { borderColor: "var(--danger-soft, #fca5a5)" } },
+      el("div", { class: "card__head" }, el("h2", { style: { color: "var(--danger)" }, text: "Danger zone" })),
+      el(
+        "p",
+        { class: "muted" },
+        "Permanently delete this subject and all associated syllabus documents, scheduled lectures, and teaching progress records. This action cannot be reversed.",
+      ),
+      el(
+        "div",
+        { class: "form-actions", style: { marginTop: "1rem" } },
+        el("button", {
+          class: "btn btn--danger",
+          type: "button",
+          text: "Delete this subject",
+          onClick: async () => {
+            const confirmed = await confirmDialog({
+              title: `Delete subject "${course.name}"?`,
+              message: `Are you sure you want to permanently delete "${course.name}"? All units, topics, timetable slots, and lecture history will be deleted immediately.`,
+              confirmLabel: "Delete subject",
+            });
+            if (!confirmed) return;
+            try {
+              await api.deleteCourse(courseId);
+              toast(`Subject "${course.name}" was deleted.`, "ok");
+              ctx.navigate("#/courses");
+            } catch (err) {
+              toast(err.message || "Failed to delete subject", "error");
+            }
+          },
+        }),
+      ),
+    ),
   );
 }
 
@@ -548,4 +606,34 @@ async function recalibrate(ctx, reason = "Course configuration changed") {
     }
     toast(error.message, "error");
   }
+}
+
+export async function renderUserSettings(ctx) {
+  let userSettings = {};
+  try {
+    userSettings = await api.getSettings();
+  } catch {
+    userSettings = {};
+  }
+  mount(
+    ctx.root,
+    el(
+      "div",
+      { class: "page-head" },
+      el(
+        "div",
+        {},
+        el("h1", { text: "AI & Teaching Settings" }),
+        el("p", {
+          text: "Choose whether syllabus uploads use AI, and which provider and model to prefer.",
+        }),
+      ),
+    ),
+    el(
+      "div",
+      { class: "card" },
+      el("div", { class: "card__head" }, el("h2", { text: "🤖 AI Extraction Configuration" })),
+      buildAiConfigCard(userSettings, () => renderUserSettings(ctx)),
+    ),
+  );
 }

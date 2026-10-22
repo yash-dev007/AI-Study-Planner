@@ -18,14 +18,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Tesseract makes scanned PDFs work; curl is used by the healthcheck.
+# curl is used by the container healthcheck.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tesseract-ocr curl \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Dependencies first so application changes do not invalidate the layer.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra ocr
+RUN uv sync --frozen --no-dev
 
 COPY alembic.ini ./
 COPY alembic ./alembic

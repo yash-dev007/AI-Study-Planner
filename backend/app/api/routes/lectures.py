@@ -9,7 +9,6 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.deps import CourseDep, CurrentUser, DbSession, Pagination
-from app.core.timeutil import ensure_utc
 from app.models.entities import SessionStatus
 from app.schemas.common import Page
 from app.schemas.lecture import (
@@ -66,7 +65,7 @@ def list_lectures(
     for session in scheduling_service.revision_sessions(db, revision):
         if lecture_status is not None and session.status != lecture_status:
             continue
-        day = ensure_utc(session.scheduled_start).date()
+        day = progress_service.course_date(course, session.scheduled_start)
         if from_date is not None and day < from_date:
             continue
         if to_date is not None and day > to_date:

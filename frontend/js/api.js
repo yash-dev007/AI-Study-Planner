@@ -6,9 +6,12 @@
  * exactly what the server said.
  */
 
-const TOKEN_KEY = "adaptive-syllabus.token";
 const USER_KEY = "adaptive-syllabus.user";
 const BASE = "/api/v1";
+
+// Sessions live in the HttpOnly cookie set by the backend. Older builds kept a
+// bearer token in localStorage; drop it so it cannot linger after this upgrade.
+localStorage.removeItem("adaptive-syllabus.token");
 
 export class ApiError extends Error {
   constructor(message, { code = "ERROR", status = 0, details = {} } = {}) {
@@ -21,9 +24,6 @@ export class ApiError extends Error {
 }
 
 export const session = {
-  get token() {
-    return localStorage.getItem(TOKEN_KEY);
-  },
   get user() {
     const raw = localStorage.getItem(USER_KEY);
     if (!raw) return null;
@@ -33,12 +33,10 @@ export const session = {
       return null;
     }
   },
-  save(token, user) {
-    localStorage.setItem(TOKEN_KEY, token);
+  save(user) {
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   },
   clear() {
-    localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
   },
 };
@@ -56,7 +54,6 @@ function buildQuery(query) {
 
 async function request(method, path, { body, query, form } = {}) {
   const headers = {};
-  if (session.token) headers.Authorization = `Bearer ${session.token}`;
 
   let payload;
   if (form) {
@@ -72,6 +69,7 @@ async function request(method, path, { body, query, form } = {}) {
       method,
       headers,
       body: payload,
+      credentials: "same-origin",
     });
   } catch (cause) {
     throw new ApiError("The server could not be reached. Check your connection.", {
@@ -95,11 +93,16 @@ async function request(method, path, { body, query, form } = {}) {
 
   if (!response.ok) {
     const envelope = data && data.error ? data.error : {};
-    throw new ApiError(envelope.message || `Request failed (${response.status})`, {
+    const error = new ApiError(envelope.message || `Request failed (${response.status})`, {
       code: envelope.code || `HTTP_${response.status}`,
       status: response.status,
       details: envelope.details,
     });
+    if (response.status === 401 && !path.startsWith("/auth/")) {
+      // Let the shell end the session once, however deep in the UI the call was.
+      window.dispatchEvent(new CustomEvent("auth:unauthorized", { detail: error }));
+    }
+    throw error;
   }
   return data;
 }
@@ -114,6 +117,7 @@ export const api = {
   // ---------------------------------------------------------------- auth
   login: (email, password) => post("/auth/login", { email, password }),
   register: (payload) => post("/auth/register", payload),
+  logout: () => post("/auth/logout"),
   me: () => get("/auth/me"),
 
   // -------------------------------------------------------------- courses
@@ -121,21 +125,68 @@ export const api = {
   createCourse: (payload) => post("/courses", payload),
   getCourse: (courseId) => get(`/courses/${courseId}`),
   updateCourse: (courseId, payload) => patch(`/courses/${courseId}`, payload),
+  deleteCourse: (courseId) => del(`/courses/${courseId}`),
   setAvailability: (courseId, rules) => put(`/courses/${courseId}/availability`, rules),
   addException: (courseId, payload) => post(`/courses/${courseId}/exceptions`, payload),
   deleteException: (courseId, exceptionId) => del(`/courses/${courseId}/exceptions/${exceptionId}`),
 
   // --------------------------------------------------------------- syllabus
   listDocuments: (courseId) => get(`/courses/${courseId}/syllabus`),
-  uploadSyllabus: (courseId, file) => {
-    const form = new FormData();
-    form.append("file", file);
-    return request("POST", `/courses/${courseId}/syllabus/upload`, { form });
+  uploadSyllabus: (courseId, file, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${BASE}/courses/${courseId}/syllabus/upload`);
+      xhr.withCredentials = true;
+      if (xhr.upload && typeof onProgress === "function") {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) {
+            const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+            onProgress({ loaded: event.loaded, total: event.total, percent });
+          }
+        };
+      }
+      xhr.onload = () => {
+        let data = null;
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {
+          data = { raw: xhr.responseText };
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(data);
+        } else {
+          const envelope = data && data.error ? data.error : {};
+          reject(
+            new ApiError(envelope.message || `Request failed (${xhr.status})`, {
+              code: envelope.code || `HTTP_${xhr.status}`,
+              status: xhr.status,
+              details: envelope.details || {},
+            }),
+          );
+        }
+      };
+      xhr.onerror = () => {
+        reject(
+          new ApiError("The server could not be reached. Check your connection.", {
+            code: "NETWORK_ERROR",
+            status: 0,
+          }),
+        );
+      };
+      const form = new FormData();
+      form.append("file", file);
+      xhr.send(form);
+    });
   },
+  uploadTextSyllabus: (courseId, payload) => post(`/courses/${courseId}/syllabus/text`, payload),
   extractionPreview: (courseId, documentId) =>
     get(`/courses/${courseId}/syllabus/documents/${documentId}/preview`),
+  refinePreview: (courseId, documentId, payload) =>
+    post(`/courses/${courseId}/syllabus/documents/${documentId}/refine`, payload),
   confirmSyllabus: (courseId, payload) => post(`/courses/${courseId}/syllabus/confirm`, payload),
   syllabusStructure: (courseId) => get(`/courses/${courseId}/syllabus/structure`),
+  saveSyllabusStructure: (courseId, payload) =>
+    put(`/courses/${courseId}/syllabus`, payload),
   updateTopic: (courseId, topicId, payload) =>
     patch(`/courses/${courseId}/syllabus/topics/${topicId}`, payload),
   deleteTopic: (courseId, topicId) => del(`/courses/${courseId}/syllabus/topics/${topicId}`),
@@ -180,6 +231,12 @@ export const api = {
   listNotifications: (query) => get("/notifications", query),
   markNotification: (id, read) => patch(`/notifications/${id}`, { read }),
   markAllNotifications: () => post("/notifications/read-all"),
+
+  // ------------------------------------------------------------- settings
+  getSettings: () => get("/settings"),
+  updateSettings: (payload) => put("/settings", payload),
+  saveAiConfig: (payload) => post("/settings/ai-config", payload),
+  testAiConnection: (payload) => post("/settings/ai-test", payload),
 
   health: () => fetch("/health").then((response) => response.json()),
 };

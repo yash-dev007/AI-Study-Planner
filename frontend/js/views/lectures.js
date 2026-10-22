@@ -86,11 +86,11 @@ export async function render(ctx) {
           ],
           page.items.map((lecture) => {
             const planned = lecture.allocations.reduce(
-              (total, allocation) => total + allocation.allocated_duration_minutes,
+              (total, allocation) => total + allocation.planned_minutes,
               0,
             );
             const delivered = lecture.allocations.reduce(
-              (total, allocation) => total + (allocation.actual_duration_minutes || 0),
+              (total, allocation) => total + (allocation.actual_minutes || 0),
               0,
             );
             return [
@@ -110,7 +110,7 @@ export async function render(ctx) {
                 lecture.allocations.length
                   ? lecture.allocations.map((allocation) =>
                       el("div", {
-                        text: `${allocation.topic_title} · ${minutesLabel(allocation.allocated_duration_minutes)}`,
+                        text: `${allocation.topic_title} · ${minutesLabel(allocation.planned_minutes)}`,
                       }),
                     )
                   : el("span", { class: "muted", text: "No topics" }),
@@ -180,11 +180,11 @@ export async function renderDetail(ctx) {
   const detail = await api.getLecture(courseId, ctx.params.lectureId);
   const lecture = detail.lecture;
   const planned = lecture.allocations.reduce(
-    (total, allocation) => total + allocation.allocated_duration_minutes,
+    (total, allocation) => total + allocation.planned_minutes,
     0,
   );
   const delivered = lecture.allocations.reduce(
-    (total, allocation) => total + (allocation.actual_duration_minutes || 0),
+    (total, allocation) => total + (allocation.actual_minutes || 0),
     0,
   );
 
@@ -260,10 +260,10 @@ export async function renderDetail(ctx) {
           const progress = progressById.get(String(allocation.topic_id)) || {};
           return [
             el("strong", { text: allocation.topic_title }),
-            minutesLabel(allocation.allocated_duration_minutes),
-            allocation.actual_duration_minutes ? minutesLabel(allocation.actual_duration_minutes) : "—",
+            minutesLabel(allocation.planned_minutes),
+            allocation.actual_minutes ? minutesLabel(allocation.actual_minutes) : "—",
             `${minutesLabel(progress.delivered_minutes_total || 0)} / ${minutesLabel(
-              progress.estimated_minutes || allocation.allocated_duration_minutes,
+              progress.estimated_minutes || allocation.planned_minutes,
             )}`,
             minutesLabel(progress.remaining_minutes ?? 0),
             badge(
@@ -334,8 +334,8 @@ async function openStatusDialog(ctx, detail) {
     const control = input({
       type: "number",
       min: 0,
-      max: allocation.allocated_duration_minutes,
-      value: allocation.allocated_duration_minutes,
+      max: allocation.planned_minutes,
+      value: allocation.planned_minutes,
     });
     minuteInputs.set(String(allocation.topic_id), control);
     return el(
@@ -347,7 +347,7 @@ async function openStatusDialog(ctx, detail) {
         el("strong", { text: allocation.topic_title }),
         el("div", {
           class: "muted",
-          text: `${minutesLabel(allocation.allocated_duration_minutes)} planned here`,
+          text: `${minutesLabel(allocation.planned_minutes)} planned here`,
         }),
       ),
       el("td", { style: { width: "120px" } }, control),

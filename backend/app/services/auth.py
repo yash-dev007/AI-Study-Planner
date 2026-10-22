@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -11,6 +12,10 @@ from sqlalchemy.orm import Session
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.entities import Course, User, UserRole, UserSettings
+
+# Verifying a throwaway hash for unknown emails keeps the login response time
+# independent of whether an account exists, closing a user-enumeration channel.
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
 
 
 def _find_by_email(db: Session, email: str) -> User | None:
@@ -30,6 +35,12 @@ def register_user(
     college_name: str = "",
     timezone: str = "UTC",
 ) -> User:
+    # Public registration creates professors only. Honouring a client-supplied
+    # ``admin`` role would let anyone take ownership of every teacher's courses.
+    if role != UserRole.PROFESSOR:
+        raise ForbiddenError(
+            "Self-registration creates professor accounts only.", code="ROLE_NOT_ALLOWED"
+        )
     if _find_by_email(db, email) is not None:
         raise ConflictError(
             "An account with this email already exists.", code="EMAIL_ALREADY_REGISTERED"
@@ -52,7 +63,12 @@ def register_user(
 
 def authenticate(db: Session, *, email: str, password: str) -> tuple[User, str, int]:
     user = _find_by_email(db, email)
-    if user is None or not verify_password(password, user.password_hash):
+    if user is None:
+        # Hash a dummy value so a missing account costs the same as a wrong
+        # password; otherwise response timing reveals registered emails.
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+        raise UnauthorizedError("Incorrect email or password.", code="INVALID_CREDENTIALS")
+    if not verify_password(password, user.password_hash):
         raise UnauthorizedError("Incorrect email or password.", code="INVALID_CREDENTIALS")
     if not user.is_active:
         raise ForbiddenError("This account has been deactivated.", code="ACCOUNT_INACTIVE")
@@ -111,6 +127,6 @@ def get_course_for_user(db: Session, *, course_id: uuid.UUID, user: User) -> Cou
     if user.role == UserRole.ADMIN:
         return course
     if course.professor_id != user.id:
-        # Do not leak the existence of another professor's course.
-        raise ForbiddenError("You do not have access to this course.", code="COURSE_FORBIDDEN")
+        # I7: ownership failures must be indistinguishable from a missing row.
+        raise NotFoundError("Course not found.", code="COURSE_NOT_FOUND")
     return course

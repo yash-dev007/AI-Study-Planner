@@ -145,11 +145,9 @@ class ScheduleRead(BaseModel):
 
 
 class GenerateScheduleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     strategy: RecoveryStrategy = "preserve_future"
-    auto_publish: bool | None = Field(
-        default=None,
-        description="Overrides the course setting for this run. Publishing is always explicit.",
-    )
 
 
 class RecalculateRequest(GenerateScheduleRequest):

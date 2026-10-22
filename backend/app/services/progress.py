@@ -10,11 +10,16 @@ from __future__ import annotations
 import math
 import uuid
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
 from app.core.timeutil import ensure_utc, now_utc
-from app.domain.scheduling import CalendarBlock, count_available_sessions
+from app.domain.scheduling import (
+    CalendarConfigurationError,
+    OccupiedInterval,
+    build_slots,
+)
 from app.models.entities import (
     Course,
     LectureSession,
@@ -47,6 +52,26 @@ STATE_PENDING = "pending"
 STATE_AT_RISK = "at_risk"
 STATE_UNPLACED = "unplaced"
 STATE_NOT_SCHEDULED = "not_scheduled"
+
+
+def course_zone(course: Course) -> ZoneInfo:
+    """The course's calendar timezone, falling back to UTC when it is invalid."""
+
+    try:
+        return ZoneInfo(course.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def course_date(course: Course, moment: datetime) -> date:
+    """The calendar date of an instant in the course's own timezone.
+
+    Slots are generated in the course timezone, so day-based views (calendar,
+    dashboard counters, date filters) must use the same calendar. Using the UTC
+    date moves every evening lecture west of UTC onto the next day.
+    """
+
+    return ensure_utc(moment).astimezone(course_zone(course)).date()
 
 
 def _topic_states(
@@ -130,7 +155,8 @@ def _topic_states(
                 reason = "Scheduled and waiting to be taught."
 
             if topic_state in {STATE_PENDING, STATE_IN_PROGRESS} and (
-                last_planned is not None and last_planned.date() > semester_end
+                last_planned is not None
+                and course_date(state.course, last_planned) > semester_end
             ):
                 topic_state = STATE_AT_RISK
                 reason = (
@@ -248,29 +274,34 @@ def build_dashboard(db: Session, *, course: Course, sessions_limit: int = 5) -> 
         key=lambda item: ensure_utc(item.scheduled_start),
     )
 
-    future_start = max(reference.date(), course.start_date)
-    blocks = calendar_blocks(state) + [
-        # Past and closed sessions still consume their slot, so they are excluded.
-        _blocked_marker(session)
+    today = course_date(course, reference)
+    future_start = max(today, course.start_date)
+    # Every lecture already in the timetable holds its own slot, so the free
+    # capacity is exactly what the real generator produces when those intervals
+    # are excluded. Blocking whole days per closed lecture over-counted the loss.
+    occupied = [
+        OccupiedInterval(
+            start=ensure_utc(session.scheduled_start), end=ensure_utc(session.scheduled_end)
+        )
         for session in sessions
-        if session.status != SessionStatus.SCHEDULED
-        or ensure_utc(session.scheduled_start) < reference
+        if ensure_utc(session.scheduled_end) > reference
     ]
     try:
-        open_slots = count_available_sessions(
-            start_date=future_start,
-            end_date=course.end_date,
-            windows=availability_windows(state),
-            lecture_duration_minutes=duration,
-            blocks=blocks,
+        capacity_remaining = len(
+            build_slots(
+                start_date=future_start,
+                end_date=course.end_date,
+                timezone=course.timezone,
+                lecture_duration_minutes=duration,
+                windows=availability_windows(state),
+                blocks=calendar_blocks(state),
+                occupied=occupied,
+                not_before=reference,
+            )
         )
-    except Exception:
-        open_slots = 0
+    except CalendarConfigurationError:
+        capacity_remaining = 0
 
-    # Already planned lectures hold slots inside their teaching windows, so the
-    # free capacity is what is left after those are accounted for. The remaining
-    # workload is covered by the planned lectures plus whatever still fits.
-    capacity_remaining = max(0, open_slots - len(future_sessions))
     additional = max(0, sessions_required - len(future_sessions) - capacity_remaining)
     expected_completion = ensure_utc(future_sessions[-1].scheduled_end) if future_sessions else None
 
@@ -286,7 +317,7 @@ def build_dashboard(db: Session, *, course: Course, sessions_limit: int = 5) -> 
             f"still free, so about {additional} extra session(s) are needed. Add availability, "
             "extend the semester, or accept a later finish."
         )
-    if expected_completion and expected_completion.date() > course.end_date:
+    if expected_completion and course_date(course, expected_completion) > course.end_date:
         warnings.append("The projected completion date is after the end of the semester.")
     if counters[STATE_NOT_SCHEDULED]:
         warnings.append(
@@ -376,7 +407,7 @@ def build_dashboard(db: Session, *, course: Course, sessions_limit: int = 5) -> 
         additional_sessions_required=additional,
         estimated_completion=expected_completion,
         semester_end=course.end_date,
-        days_remaining=max(0, (course.end_date - reference.date()).days),
+        days_remaining=max(0, (course.end_date - today).days),
         on_track=additional == 0 and counters[STATE_UNPLACED] == 0,
         warnings=warnings,
         next_lectures=upcoming_rows,
@@ -397,14 +428,6 @@ def _minutes_remaining_in_topics(
     return remaining
 
 
-def _blocked_marker(session: LectureSession) -> CalendarBlock:
-    return CalendarBlock(
-        date=ensure_utc(session.scheduled_start).date(),
-        blocks_teaching=True,
-        description="closed session",
-    )
-
-
 def build_calendar(
     db: Session, *, course: Course, range_start: date, range_end: date, view: str
 ) -> CalendarResponse:
@@ -420,7 +443,7 @@ def build_calendar(
 
     by_day: dict[date, list[LectureSession]] = {}
     for session in sessions:
-        day = ensure_utc(session.scheduled_start).date()
+        day = course_date(course, session.scheduled_start)
         if range_start <= day <= range_end:
             by_day.setdefault(day, []).append(session)
 
@@ -464,7 +487,7 @@ def calendar_entries(
         return []
     entries: list[dict[str, object]] = []
     for session in revision_sessions(db, base):
-        day = ensure_utc(session.scheduled_start).date()
+        day = course_date(course, session.scheduled_start)
         if not (range_start <= day <= range_end):
             continue
         entries.append(

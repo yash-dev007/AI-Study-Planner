@@ -3,6 +3,7 @@
 import { ApiError, api } from "../api.js";
 import {
   badge,
+  confirmDialog,
   el,
   emptyState,
   errorState,
@@ -84,6 +85,27 @@ export async function render(ctx) {
                 type: "button",
                 text: "Settings",
                 onClick: () => ctx.navigate(`#/courses/${course.id}/settings`),
+              }),
+              el("button", {
+                class: "btn btn--secondary btn--small",
+                style: { color: "var(--danger)", borderColor: "var(--danger-soft, #fca5a5)" },
+                type: "button",
+                text: "Delete",
+                onClick: async () => {
+                  const confirmed = await confirmDialog({
+                    title: `Delete subject "${course.name}"?`,
+                    message: `Are you sure you want to delete ${course.course_code ? `${course.course_code} - ` : ""}${course.name}? This will permanently remove its syllabus, timetable, and all lecture history. This cannot be undone.`,
+                    confirmLabel: "Delete subject",
+                  });
+                  if (!confirmed) return;
+                  try {
+                    await api.deleteCourse(course.id);
+                    toast(`Subject "${course.name}" was deleted.`, "ok");
+                    await load();
+                  } catch (err) {
+                    toast(err.message || "Failed to delete subject", "error");
+                  }
+                },
               }),
             ),
           ]),

@@ -92,7 +92,15 @@ def login(payload: LoginRequest, db: DbSession, response: Response) -> TokenResp
 
 @router.post("/logout", status_code=204, summary="Clear the session cookie")
 def logout(response: Response) -> None:
-    response.delete_cookie(settings.access_token_cookie, path="/")
+    # Mirror the attributes used when the cookie was set: a different path or
+    # domain would leave the live session cookie in the browser.
+    response.delete_cookie(
+        settings.access_token_cookie,
+        path="/",
+        secure=settings.is_production,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 @router.get("/me", response_model=UserRead, summary="Current account")
@@ -120,6 +128,7 @@ def update_my_profile(
 @router.post(
     "/change-password",
     response_model=TokenResponse,
+    dependencies=[Depends(auth_rate_limit)],
     summary="Change my password and rotate the session",
 )
 def update_password(

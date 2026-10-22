@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.domain.scheduling.planner import PlannerSlot
@@ -44,6 +44,22 @@ def resolve_timezone(name: str) -> ZoneInfo:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise CalendarConfigurationError(f"Unknown timezone: {name!r}") from exc
+
+
+def _local_time_exists(moment: datetime) -> bool:
+    """True when the wall-clock time really occurs in the course timezone.
+
+    On a DST spring-forward day the clock jumps over an hour, so that local time
+    never happens. Python still builds a datetime for it, resolved with the
+    pre-transition offset, which lands on the same instant as the following real
+    slot and would double-book the lecture.
+
+    Aware datetimes compare by instant, so the comparison is done on the wall
+    clock (naive values) to detect the gap.
+    """
+
+    round_trip = moment.astimezone(UTC).astimezone(moment.tzinfo)
+    return round_trip.replace(tzinfo=None) == moment.replace(tzinfo=None)
 
 
 def build_slots(
@@ -94,13 +110,21 @@ def build_slots(
                 if window.effective_until and current > window.effective_until:
                     continue
 
+                duration = timedelta(minutes=lecture_duration_minutes)
                 cursor = datetime.combine(current, window.start_time, tzinfo=tz)
                 window_end = datetime.combine(current, window.end_time, tzinfo=tz)
                 if window_end <= cursor:
                     continue
-                while cursor + timedelta(minutes=lecture_duration_minutes) <= window_end:
+                while cursor + duration <= window_end:
                     slot_start = cursor
-                    slot_end = cursor + timedelta(minutes=lecture_duration_minutes)
+                    if not _local_time_exists(slot_start):
+                        # Move to the first real local time after the DST gap,
+                        # without creating an impossible lecture slot.
+                        cursor = slot_start.astimezone(UTC).astimezone(tz)
+                        continue
+                    # Advance in real time so a clock change can neither stretch
+                    # nor shrink a lecture.
+                    slot_end = (slot_start.astimezone(UTC) + duration).astimezone(tz)
                     cursor = slot_end
 
                     if not_before is not None and slot_start < not_before:

@@ -47,7 +47,7 @@ def calendar(
     range_start: Annotated[date | None, Query()] = None,
     range_end: Annotated[date | None, Query()] = None,
 ) -> CalendarResponse:
-    today = now_utc().date()
+    today = progress_service.course_date(course, now_utc())
     start = range_start
     end = range_end
     if start is None:

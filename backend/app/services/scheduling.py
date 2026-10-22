@@ -119,7 +119,6 @@ def load_course_state(db: Session, course: Course) -> CourseState:
     )
     topics = {topic.id: topic for unit in units for topic in unit.topics}
     unit_titles = {unit.id: unit.title for unit in units}
-
     prerequisites: dict[uuid.UUID, set[uuid.UUID]] = {topic_id: set() for topic_id in topics}
     dependents: dict[uuid.UUID, list[uuid.UUID]] = {topic_id: [] for topic_id in topics}
     if topics:
@@ -161,6 +160,45 @@ def load_course_state(db: Session, course: Course) -> CourseState:
         rules=rules,
         exceptions=exceptions,
         unit_titles=unit_titles,
+    )
+
+
+def active_course_state(state: CourseState) -> CourseState:
+    """Remove archived units and topics before a new plan is built.
+
+    Archived rows stay readable for history and progress, but they must never
+    receive new allocations. Dependencies that point at archived topics are
+    dropped so the plan only orders work that can still be taught.
+    """
+
+    units = [unit for unit in state.units if unit.archived_at is None]
+    topics = {
+        topic.id: topic
+        for unit in units
+        for topic in unit.topics
+        if topic.archived_at is None
+    }
+    return CourseState(
+        course=state.course,
+        units=units,
+        topics=topics,
+        prerequisites={
+            topic_id: frozenset(
+                prerequisite
+                for prerequisite in prerequisites
+                if prerequisite in topics
+            )
+            for topic_id, prerequisites in state.prerequisites.items()
+            if topic_id in topics
+        },
+        dependents={
+            topic_id: [dependent for dependent in dependents if dependent in topics]
+            for topic_id, dependents in state.dependents.items()
+            if topic_id in topics
+        },
+        rules=state.rules,
+        exceptions=state.exceptions,
+        unit_titles={unit.id: unit.title for unit in units},
     )
 
 
@@ -987,7 +1025,7 @@ def generate_schedule(
 ) -> ScheduleRevision:
     """Generate or recalculate a schedule and store it as a pending revision."""
 
-    state = load_course_state(db, course)
+    state = active_course_state(load_course_state(db, course))
     base_revision = base_revision_for(db, course)
     _assert_base_is_current(db, course, base_revision_id, base_revision)
 

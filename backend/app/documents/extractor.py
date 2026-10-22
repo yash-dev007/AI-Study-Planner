@@ -1,15 +1,15 @@
 """Safe extraction of text from uploaded syllabus documents.
 
 The extractor never executes, renders, or otherwise trusts document content.
-It only converts bytes to plain text and returns metadata. OCR is used only
-when a PDF page contains too little text to be useful, and only when the
-optional OCR dependencies and the system Tesseract binary are available.
+It only converts bytes to plain text and returns metadata. AI extracts structure
+from the resulting text.
 """
 
 from __future__ import annotations
 
 import io
 import re
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,16 +26,29 @@ CONTENT_TYPE_EXTENSIONS = {
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 # Byte-order marks for text encodings that legitimately contain NUL bytes.
-_TEXT_BOMS = (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff", b"\xff\xfe", b"\xfe\xff")
+# UTF-32 entries must be tested first: their BOM starts with the UTF-16 one.
+_TEXT_BOMS = (
+    (b"\xff\xfe\x00\x00", "utf-32"),
+    (b"\x00\x00\xfe\xff", "utf-32"),
+    (b"\xff\xfe", "utf-16"),
+    (b"\xfe\xff", "utf-16"),
+)
+_TEXT_BOM_BYTES = tuple(bom for bom, _encoding in _TEXT_BOMS)
 _EXCESS_BLANK_LINES = re.compile(r"\n{3,}")
+
+# A DOCX is a zip archive: a few hundred kilobytes can inflate to gigabytes.
+# These limits are checked from the archive directory before anything is inflated.
+MAX_DOCX_ENTRIES = 2_000
+MAX_DOCX_UNCOMPRESSED_BYTES = 60 * 1024 * 1024
+MAX_DOCX_COMPRESSION_RATIO = 200
+# Bounds the per-page text extraction work for very long PDFs.
+MAX_PDF_PAGES = 400
 
 
 @dataclass
 class ExtractionResult:
     text: str
     page_count: int = 0
-    ocr_used: bool = False
-    ocr_pages: list[int] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -79,7 +92,7 @@ def validate_upload(filename: str, content_type: str, data: bytes) -> str:
         sample = data[:2048]
         # NUL bytes mean binary content, except in text encoded as UTF-16/UTF-32,
         # which starts with a byte-order mark.
-        if b"\x00" in sample and not sample.startswith(_TEXT_BOMS):
+        if b"\x00" in sample and not sample.startswith(_TEXT_BOM_BYTES):
             raise DocumentProcessingError(
                 "The text file appears to be binary and cannot be read as a syllabus.",
                 code="CORRUPT_DOCUMENT",
@@ -87,8 +100,51 @@ def validate_upload(filename: str, content_type: str, data: bytes) -> str:
     return extension
 
 
+def _check_docx_archive(data: bytes) -> None:
+    """Reject a DOCX archive that would inflate past the memory budget.
+
+    Checked from the archive directory (declared sizes) so a zip bomb is refused
+    before python-docx inflates it.
+    """
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            infos = archive.infolist()
+            if len(infos) > MAX_DOCX_ENTRIES:
+                raise DocumentProcessingError(
+                    "The DOCX file contains an implausible number of parts and was rejected.",
+                    code="CORRUPT_DOCUMENT",
+                    details={"entries": len(infos)},
+                )
+            total = 0
+            for info in infos:
+                total += info.file_size
+                if total > MAX_DOCX_UNCOMPRESSED_BYTES:
+                    raise DocumentProcessingError(
+                        "The DOCX file expands beyond the size this server will process.",
+                        code="CORRUPT_DOCUMENT",
+                        details={"declared_bytes": total},
+                    )
+                if (
+                    info.compress_size > 0
+                    and info.file_size / info.compress_size > MAX_DOCX_COMPRESSION_RATIO
+                ):
+                    raise DocumentProcessingError(
+                        "The DOCX file is compressed far beyond a normal document and was "
+                        "rejected.",
+                        code="CORRUPT_DOCUMENT",
+                        details={"entry": info.filename},
+                    )
+    except zipfile.BadZipFile as exc:
+        raise DocumentProcessingError(
+            "The DOCX file could not be read. It may be corrupted or password protected.",
+            code="CORRUPT_DOCUMENT",
+        ) from exc
+
+
 def sanitize_text(text: str) -> str:
-    cleaned = text.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = text.replace("\ufeff", "")
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
     cleaned = _CONTROL_CHARS.sub(" ", cleaned)
     cleaned = _EXCESS_BLANK_LINES.sub("\n\n", cleaned)
     cleaned = "\n".join(line.rstrip() for line in cleaned.split("\n"))
@@ -96,20 +152,6 @@ def sanitize_text(text: str) -> str:
         cleaned = cleaned[: settings.max_extracted_chars]
     return cleaned.strip()
 
-
-def _ocr_available() -> tuple[bool, str]:
-    try:
-        import pytesseract
-        from PIL import Image  # noqa: F401
-    except Exception:
-        return False, "pytesseract/Pillow are not installed."
-    if settings.tesseract_cmd:
-        pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
-    try:
-        pytesseract.get_tesseract_version()
-    except Exception as exc:  # pragma: no cover - depends on host binary
-        return False, f"Tesseract is not available: {exc}"
-    return True, ""
 
 
 def extract_text(filename: str, content_type: str, data: bytes) -> ExtractionResult:
@@ -136,15 +178,19 @@ def _require_text(text: str, extension: str) -> str:
 
 
 def _decode_text(data: bytes) -> str:
-    for encoding in ("utf-8", "utf-16", "latin-1"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace")
+    # Honour the byte-order mark first: decoding UTF-32 as UTF-16 silently yields
+    # NUL-riddled noise instead of the document text.
+    for bom, encoding in _TEXT_BOMS:
+        if data.startswith(bom):
+            return data.decode(encoding, errors="replace")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
 
 
 def _extract_docx(data: bytes) -> str:
+    _check_docx_archive(data)
     try:
         import docx
 
@@ -188,83 +234,36 @@ def _extract_pdf(data: bytes) -> ExtractionResult:
             raise DocumentProcessingError("The PDF contains no pages.", code="CORRUPT_DOCUMENT")
 
         pages: list[str] = []
-        sparse_pages: list[int] = []
+        warnings: list[str] = []
+        characters = 0
         for number in range(page_count):
+            if number >= MAX_PDF_PAGES:
+                warnings.append(
+                    f"Only the first {MAX_PDF_PAGES} of {page_count} pages were read."
+                )
+                break
             text = document.load_page(number).get_text("text")
             pages.append(text)
-            if len(text.strip()) < settings.ocr_min_chars_per_page:
-                sparse_pages.append(number)
-
-        warnings: list[str] = []
-        ocr_used = False
-        ocr_pages: list[int] = []
-
-        if sparse_pages and settings.ocr_enabled:
-            if len(sparse_pages) == page_count:
-                # Fully scanned document: OCR is required, fail clearly if absent.
-                ocr_pages = list(sparse_pages)
-                ocr_results = _ocr_pages_individually(data, sparse_pages)
-                for number, text in zip(sparse_pages, ocr_results, strict=True):
-                    pages[number] = text
-                ocr_used = True
-            else:
-                try:
-                    ocr_results = _ocr_pages_individually(data, sparse_pages)
-                    for number, text in zip(sparse_pages, ocr_results, strict=True):
-                        pages[number] = text
-                    ocr_pages = list(sparse_pages)
-                    ocr_used = True
+            characters += len(text)
+            if characters >= settings.max_extracted_chars:
+                # Stop paying for pages that would be truncated anyway.
+                if number + 1 < page_count:
                     warnings.append(
-                        f"OCR was used for {len(sparse_pages)} page(s) with little embedded text."
+                        "The document is longer than the extraction limit; later pages were "
+                        "not read."
                     )
-                except DocumentProcessingError as exc:
-                    warnings.append(
-                        f"{len(sparse_pages)} page(s) had no embedded text and could not be OCR'd: "
-                        f"{exc.message}"
-                    )
-        elif sparse_pages:
-            warnings.append(
-                "Some pages contain little embedded text and may be scanned. OCR is disabled."
-            )
+                break
 
         text = "\n\n".join(pages)
         if not text.strip():
-            detail = (" " + " ".join(warnings[:1])) if warnings else ""
             raise DocumentProcessingError(
-                "No readable text could be extracted from the PDF. It may be an image-only "
-                f"scan.{detail}".strip(),
+                "No readable text could be extracted from the PDF. Upload a text-based "
+                "document or paste your syllabus text directly.",
                 code="NO_TEXT_EXTRACTED",
-                details={"page_count": page_count, "warnings": warnings},
+                details={"page_count": page_count},
             )
         return ExtractionResult(
             text=sanitize_text(text),
             page_count=page_count,
-            ocr_used=ocr_used,
-            ocr_pages=ocr_pages,
             warnings=warnings,
         )
-
-
-def _ocr_pages_individually(data: bytes, page_numbers: list[int]) -> list[str]:  # pragma: no cover
-    """Wrapper that keeps per-page OCR results aligned with page numbers."""
-
-    available, reason = _ocr_available()
-    if not available:
-        raise DocumentProcessingError(
-            "The PDF appears to be scanned and OCR is not available on this server. "
-            "Install Tesseract and the OCR extras, or upload a text-based document.",
-            code="OCR_UNAVAILABLE",
-            details={"reason": reason},
-        )
-    import fitz
-    import pytesseract
-    from PIL import Image
-
-    results: list[str] = []
-    with fitz.open(stream=data, filetype="pdf") as document:
-        for number in page_numbers:
-            page = document.load_page(number)
-            pixmap = page.get_pixmap(dpi=200)
-            image = Image.open(io.BytesIO(pixmap.tobytes("png")))
-            results.append(pytesseract.image_to_string(image))
-    return results

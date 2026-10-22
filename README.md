@@ -27,7 +27,6 @@ reviewable proposal: nothing is published until the professor approves it.
   - [Compose environment](#compose-environment)
   - [Backend settings](#backend-settings)
   - [LLM providers](#llm-providers)
-  - [OCR](#ocr)
 - [Using the application](#using-the-application)
 - [Scheduling engine](#scheduling-engine)
   - [Hard constraints](#hard-constraints)
@@ -69,11 +68,14 @@ The result is a plan that is explainable, reproducible, and safe to change.
 
 ## Features
 
-- **Syllabus ingestion** — upload PDF, DOCX, or TXT files; extract text with
-  optional OCR for scanned PDFs.
+- **Syllabus ingestion** — upload PDF, DOCX, or TXT files, or paste syllabus text
+  directly into the UI; extract text from PDF, DOCX, and TXT files.
 - **Structured extraction** — optional LLM interpretation with a deterministic
   rule-based fallback, confidence scoring, review flags, prerequisite
   resolution, and duration normalization.
+- **Prompt-based AI editing** — refine and reorganize extracted units and topics
+  using natural language prompts (e.g. splitting units, adjusting durations,
+  adding topics) before confirming.
 - **Human confirmation** — extracted units and topics are only a preview until
   the professor edits and confirms them.
 - **Deterministic scheduling** — prerequisite-aware, priority-ordered planning
@@ -96,7 +98,7 @@ The result is a plan that is explainable, reproducible, and safe to change.
   schedule decisions, lecture status changes) are recorded.
 - **No frontend build step** — the UI is plain HTML, CSS, and ES modules served
   by the same FastAPI process.
-- **Tested end to end** — 125 unit and API integration tests run against a
+- **Tested end to end** — 279 unit and API integration tests run against a
   throwaway SQLite database with no network or API keys required.
 
 ## How it works
@@ -163,8 +165,7 @@ flowchart TB
         Files[("Uploaded syllabus files")]
     end
 
-    Providers["Optional LLM<br/>OpenRouter or Ollama"]
-    Tesseract["Optional Tesseract OCR"]
+    Providers["Optional LLM<br/>OpenRouter, Gemini, or Ollama"]
 
     UI --> API
     API --> Auth
@@ -175,7 +176,6 @@ flowchart TB
     Services --> DB
     Services --> Files
     Extract -.-> Providers
-    Extract -.-> Tesseract
 ```
 
 ### Layering
@@ -202,7 +202,7 @@ separate validator before a revision is stored.
 | Validation | Pydantic v2, pydantic-settings |
 | Persistence | SQLAlchemy 2.x, Alembic, PostgreSQL 16 (SQLite for local dev) |
 | Auth | JWT (PyJWT), Argon2 password hashing via `pwdlib` |
-| Documents | PyMuPDF (PDF), python-docx (DOCX), optional Tesseract OCR |
+| Documents | PyMuPDF (PDF), python-docx (DOCX) |
 | LLM providers | OpenRouter HTTP API, Ollama HTTP API, or none |
 | Frontend | Vanilla HTML, CSS, JavaScript modules; no bundler |
 | Packaging | `uv`, Docker image with a pinned `uv` stage |
@@ -220,7 +220,7 @@ separate validator before a revision is stored.
 │   │   ├── api/                     # FastAPI routes and shared dependencies
 │   │   ├── core/                    # settings, security, errors, rate limiting, logging
 │   │   ├── db/                      # engine, session factory, declarative base
-│   │   ├── documents/               # PDF/DOCX/TXT text extraction and OCR
+│   │   ├── documents/               # PDF/DOCX/TXT text extraction
 │   │   ├── domain/scheduling/       # calendar expansion, planner, validation, diff
 │   │   ├── models/                  # SQLAlchemy entities
 │   │   ├── schemas/                 # Pydantic request/response models
@@ -295,11 +295,8 @@ cd backend
 # Install runtime + development dependencies.
 uv sync --extra dev
 
-# Optional: OCR support for scanned PDFs (also requires the Tesseract binary).
-uv sync --extra dev --extra ocr
-
-# Create local settings.
-cp .env.example .env
+# Create local settings from the canonical template.
+cp ../.env.example .env
 
 # Apply migrations once. In development the app also creates missing tables
 # at startup, but running Alembic keeps the schema at the expected head.
@@ -349,11 +346,19 @@ development instance to anyone else.
 | `POSTGRES_DB` | No | `syllabus` | Database name. |
 | `APP_ENV` | No | `production` | Environment name. |
 | `API_PORT` | No | `8000` | Host port for the API and UI. |
-| `LLM_PROVIDER` | No | `none` | `none`, `openrouter`, or `ollama`. |
+| `LLM_PROVIDER` | No | `none` | `none`, `openrouter`, `gemini`, or `ollama`. |
 | `OPENROUTER_API_KEY` | If OpenRouter | empty | OpenRouter key. |
+| `OPENROUTER_MODEL` | No | `google/gemini-2.0-flash-001` | OpenRouter model. |
+| `GEMINI_API_KEY` | If Gemini | empty | Google Gemini key. |
+| `GEMINI_MODEL` | No | `gemini-2.0-flash` | Gemini model. |
 | `OLLAMA_BASE_URL` | If Ollama | `http://host.docker.internal:11434` | Ollama endpoint reachable from the container. |
-| `OCR_ENABLED` | No | `true` | Enable OCR for sparse/scanned PDF pages. |
+| `OLLAMA_MODEL` | No | `llama3.1:8b` | Ollama model. |
 | `CORS_ORIGINS` | No | empty | Comma-separated origins when the UI is served elsewhere. |
+
+> Compose reads the repository-root `.env` for interpolation and forwards the
+> provider variables above. In production the Settings UI cannot write keys; it
+> lets each teacher enable AI and choose the provider/model after the operator
+> provisions the server key.
 
 > The Compose file forwards a focused subset of settings. For finer control
 > (`OPENROUTER_MODEL`, `OLLAMA_MODEL`, rate limits, duration limits, etc.), add
@@ -395,23 +400,23 @@ Defaults are suitable for local development. Full template:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `CORS_ORIGINS` | local Vite origins | Comma-separated list or JSON array; empty means no cross-origin access. |
+| `TRUST_FORWARDED_FOR` | `false` | Trust `X-Forwarded-For` for per-IP limits; enable only behind a proxy that overwrites it. |
 | `STORAGE_DIR` | `backend/storage` | Uploaded syllabus files. Never web-served. |
 | `FRONTEND_DIR` | `../frontend` | Static UI directory; overridden to `/srv/frontend` in Docker. |
 | `MAX_UPLOAD_MB` | `10` | Maximum upload size. |
 | `MAX_EXTRACTED_CHARS` | `120000` | Text truncation limit after extraction. |
-| `OCR_ENABLED` | `true` | Try OCR for PDF pages with little embedded text. |
-| `OCR_MIN_CHARS_PER_PAGE` | `40` | Page text below this threshold is treated as scanned. |
-| `TESSERACT_CMD` | empty | Explicit Tesseract binary path when it is not on `PATH`. |
 
 #### Extraction and duration defaults
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `LLM_PROVIDER` | `none` | `none`, `openrouter`, or `ollama`. |
+| `LLM_PROVIDER` | `openrouter` | `none`, `openrouter`, `gemini`, or `ollama`. AI is off unless the selected provider is configured. |
 | `LLM_TIMEOUT_SECONDS` | `60` | HTTP timeout for provider calls. |
 | `OPENROUTER_API_KEY` | empty | Required when using OpenRouter. |
 | `OPENROUTER_MODEL` | `google/gemini-2.0-flash-001` | OpenRouter model ID. |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter-compatible endpoint. |
+| `GEMINI_API_KEY` | empty | Required when using Gemini directly. |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model ID. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama endpoint. |
 | `OLLAMA_MODEL` | `llama3.1:8b` | Ollama model name. |
 | `DEFAULT_TOPIC_MINUTES` | `60` | Fallback topic duration when no hint is found. |
@@ -430,7 +435,7 @@ Defaults are suitable for local development. Full template:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SEED_DEMO_DATA` | `true` | Seed the demo professor/course when no users exist. Ignored in production. |
+| `SEED_DEMO_DATA` | `false` | Seed the demo professor/course when no users exist. Ignored in production. |
 | `DEMO_PROFESSOR_NAME` | `Dr. Demo Professor` | Seeded professor name. |
 | `DEMO_PROFESSOR_EMAIL` | `professor@example.edu` | Seeded login email. |
 | `DEMO_PROFESSOR_PASSWORD` | `professor123` | Seeded login password. |
@@ -439,45 +444,60 @@ Defaults are suitable for local development. Full template:
 
 ### LLM providers
 
-The LLM is **optional** and is used only to interpret syllabus structure. The
-deterministic rule-based extractor is always available and is used when:
+The LLM is **optional** and is used for initial syllabus structure extraction
+and prompt-driven syllabus refinement. The deterministic rule-based extractor
+is always available and is used when:
 
-- `LLM_PROVIDER=none` (the default);
-- the provider is not configured;
+- `LLM_PROVIDER=none`, or the selected provider has no key configured;
+- the provider is not configured or no API key is set;
 - the provider times out, fails, or returns malformed/unvalidated output.
+
+> [!NOTE]
+> **API Key Location:** API keys are never returned by the API. In development
+> they can be saved from Settings, which writes `backend/.env` with mode `0600`;
+> in production that endpoint is disabled and keys must be provisioned through
+> the environment. AI calls are opt-in per teacher, so a configured server key
+> is used only after the teacher enables AI.
+>
+> With Docker, set the provider variables in the repository-root `.env` (Compose
+> interpolation) and recreate the `api` service with
+> `docker compose up -d api`. The image does not read the host `backend/.env`.
+> The UI then shows the server-managed notice and only offers per-teacher
+> enablement, provider, and model selection.
 
 Configure OpenRouter:
 
 ```dotenv
+# In backend/.env:
 LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=google/gemini-2.0-flash-001
 ```
 
-Configure Ollama:
+Configure Gemini directly:
 
 ```dotenv
+# In backend/.env:
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=AIza...
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+Configure Ollama (offline / local):
+
+```dotenv
+# In backend/.env:
 LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1:8b
 ```
 
-Provider output is treated as untrusted: it is parsed against a Pydantic schema,
-post-processed, and never used directly as a schedule. The system prompt also
-marks document text as data and instructs the model not to follow instructions
+Provider output is treated as untrusted: it is parsed against a strict Pydantic
+schema, post-processed (clamping durations to integer minutes, resolving
+prerequisites, and breaking cycles), and never used directly as a published
+schedule without professor approval. The system prompt explicitly marks
+document text as data and instructs the model not to follow instructions
 inside it.
-
-### OCR
-
-OCR is needed only for scanned/image-only PDFs.
-
-- **Docker:** Tesseract is installed in the image and OCR extras are installed.
-- **Local:** install Tesseract (`apt install tesseract-ocr` on Debian/Ubuntu,
-  `brew install tesseract` on macOS), then install the Python extras:
-  `uv sync --extra dev --extra ocr`.
-- To skip OCR entirely, set `OCR_ENABLED=false`. Scanned documents will then
-  fail with a clear, actionable error instead of silently producing an empty
-  preview.
 
 ## Using the application
 
@@ -486,25 +506,33 @@ OCR is needed only for scanned/image-only PDFs.
 2. **Create a course.** Set the semester dates, time zone, lecture duration, and
    weekly teaching windows. Holidays, exam days, events, and unavailable days
    can be added during creation or later in course settings.
-3. **Upload a syllabus.** PDF, DOCX, and TXT are supported. The response is an
+3. **Upload or paste a syllabus.** Upload PDF, DOCX, or TXT files, or paste raw
+   syllabus text directly into the "Paste text" tab. The response is an
    extraction preview, not confirmed course content.
-4. **Review and confirm the structure.** Correct titles, durations, difficulty,
-   prerequisites, priorities, and splittability. Only confirmed topics become
-   schedulable.
-5. **Generate the schedule.** Choose a recovery strategy and optionally publish
-   immediately. Otherwise the result is a pending revision.
-6. **Review the proposal.** Inspect the lecture list, capacity summary, warnings,
-   validation issues, and the before/after diff.
-7. **Approve or reject.** Approval publishes the revision (and supersedes the
+4. **Review, refine with prompts, and confirm the structure.**
+   - Use the **"✨ Refine with AI Prompt"** input to ask the AI to reorganize
+     units, add new topics, split lectures, or adjust durations via natural language prompts.
+   - Manually fine-tune titles, durations, difficulty, prerequisites, priorities,
+     and splittability directly in the table.
+   - Use **Confirm syllabus** below the reviewed table. Confirmation saves the
+     structure and immediately prepares a timetable proposal. After confirmation,
+     **Edit structure** lets you add units or topics and change durations;
+     **Save structure** persists the full revised structure.
+   - Only confirmed topics become schedulable.
+5. **Review the proposal.** Confirmation prepares a pending revision. Inspect the
+   lecture list, capacity summary, warnings, validation issues, and the
+   before/after diff. If generation cannot fit the plan, the Schedule page keeps
+   a **Generate schedule** action and explains what is missing.
+6. **Approve or reject.** Approval publishes the revision (and supersedes the
    prior one); rejection leaves the previous timetable in place.
-8. **Teach and record reality.** Mark a lecture completed, missed, or cancelled.
+7. **Teach and record reality.** Mark a lecture completed, missed, or cancelled.
    For a completed lecture, you can record partial minutes per topic; the
    remainder stays pending.
-9. **Recalculate.** The affected remaining work is replanned, delivered work is
+8. **Recalculate.** The affected remaining work is replanned, delivered work is
    preserved, and a new revision awaits approval.
-10. **Monitor progress.** The dashboard and progress views show coverage, at-risk
-    topics, upcoming lectures, and the semester calendar.
-11. **Restore if needed.** History shows every revision. An approved or
+9. **Monitor progress.** The dashboard and progress views show coverage, at-risk
+   topics, upcoming lectures, and the semester calendar.
+10. **Restore if needed.** History shows every revision. An approved or
     superseded revision can be restored as a new approved revision; history is
     never rewritten.
 
@@ -623,7 +651,7 @@ upload bytes
    ├─ validate size, extension, and magic bytes
    ├─ write file to STORAGE_DIR (auditable even if extraction fails)
    ├─ extract text
-   │    ├─ PDF: PyMuPDF text layer, OCR for sparse pages when enabled
+   │    ├─ PDF: PyMuPDF text layer
    │    ├─ DOCX: paragraphs + table rows
    │    └─ TXT: UTF-8 / UTF-16 / Latin-1 decoding
    ├─ optional LLM interpretation (validated, schema-bound)
@@ -632,8 +660,7 @@ upload bytes
    │    ├─ resolve prerequisites by key/title
    │    ├─ drop unknown references and flag topics for review
    │    ├─ break dependency cycles with warnings
-   │    ├─ clamp durations to MIN/MAX and round to 15-minute steps
-   │    └─ lower confidence for OCR-derived text
+   │    └─ clamp durations to MIN/MAX and round to 15-minute steps
    └─ persist preview document metadata (not course content)
 ```
 
@@ -708,9 +735,11 @@ Interactive documentation is generated automatically:
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/courses/{course_id}/syllabus/upload` | Upload and extract a syllabus; returns a preview. |
+| `POST` | `/courses/{course_id}/syllabus/upload` | Upload and extract a syllabus (PDF/DOCX/TXT); returns a preview. |
+| `POST` | `/courses/{course_id}/syllabus/text` | Extract syllabus structure directly from pasted text. |
 | `GET` | `/courses/{course_id}/syllabus` | List uploaded documents. |
 | `GET` | `/courses/{course_id}/syllabus/documents/{document_id}/preview` | Re-open an extraction preview. |
+| `POST` | `/courses/{course_id}/syllabus/documents/{document_id}/refine` | Refine extraction preview structure using an AI prompt. |
 | `POST` | `/courses/{course_id}/syllabus/confirm` | Confirm or replace the syllabus structure. |
 | `GET` | `/courses/{course_id}/syllabus/structure` | Confirmed units, topics, and total minutes. |
 | `PATCH` | `/courses/{course_id}/syllabus/topics/{topic_id}` | Edit a topic, duration, priority, splittability, or prerequisites. |
@@ -954,7 +983,9 @@ Production checklist:
 - Set a long, random `JWT_SECRET`; never use the development placeholder.
 - Use PostgreSQL with a strong password, not SQLite.
 - Set `APP_ENV=production` and `SEED_DEMO_DATA=false`.
-- Terminate TLS at a reverse proxy and forward `X-Forwarded-For` correctly.
+- Terminate TLS at a reverse proxy. Set `TRUST_FORWARDED_FOR=true` only when
+  that proxy overwrites `X-Forwarded-For`; otherwise per-IP limits would trust
+  a spoofable header.
 - Keep `.env` files out of version control and restrict filesystem permissions.
 - Use a persistent volume for `STORAGE_DIR`.
 - Replace the in-process rate limiter with a shared store (for example Redis) if
@@ -973,7 +1004,7 @@ cd backend
 # Install test dependencies.
 uv sync --extra dev
 
-# Run the full suite (125 tests).
+# Run the full suite (279 tests).
 uv run python -m pytest -q
 
 # With coverage.
@@ -995,11 +1026,11 @@ Coverage includes:
 
 - planner ordering, splitting, capacity, prerequisites, cycles, and diffs;
 - calendar expansion, holidays, exams, time zones, and occupied intervals;
-- PDF/DOCX/TXT extraction, OCR degradation, and corrupt uploads;
-- rule-based extraction, LLM provider adapters, fallback behavior, and schema
+- PDF/DOCX/TXT extraction, direct text paste, and corrupt uploads;
+- rule-based extraction, LLM provider adapters, prompt refinement, fallback behavior, and schema
   validation;
 - auth, token validation, rate limiting, course isolation, and path traversal;
-- the complete professor workflow: upload → confirm → generate → approve →
+- the complete professor workflow: upload → prompt refine → confirm → generate → approve →
   teach → miss → recover → rollback;
 - concurrency guards, stale revisions, validation errors, and notification
   behavior.
@@ -1025,6 +1056,18 @@ uv run alembic revision --autogenerate -m "describe the change"
 uv run alembic downgrade -1
 ```
 
+### Cleaning / resetting the database (development)
+
+To reset the SQLite database to a completely clean state:
+
+```bash
+cd backend
+rm -f data/app.db
+uv run alembic upgrade head
+```
+
+This removes all existing rows and documents, re-applies all schema migrations cleanly to head, and upon starting the server will re-seed fresh demo data if `SEED_DEMO_DATA=true`.
+
 Notes:
 
 - In `development` and `test`, the app calls `Base.metadata.create_all()` at
@@ -1039,8 +1082,8 @@ Notes:
 The included Docker image is a reasonable starting point:
 
 - Python 3.12 slim base, non-root `appuser` (UID 10001).
-- `uv sync --frozen --no-dev --extra ocr` for reproducible installs.
-- Tesseract and curl installed for OCR and container health checks.
+- `uv sync --frozen --no-dev` for reproducible installs.
+- curl installed for container health checks.
 - Static frontend mounted read-only from `./frontend` in Compose.
 - Persistent volumes for PostgreSQL data and uploaded files.
 - Health check: `GET /health` every 30 seconds.
@@ -1075,11 +1118,6 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 - Locally, `FRONTEND_DIR` defaults to `../frontend` relative to `backend/`.
   Override it if you run from another directory.
 - In Docker, the Compose volume must mount `./frontend` at `/srv/frontend`.
-
-### Uploads fail for scanned PDFs
-
-Install Tesseract and the OCR extras, or set `OCR_ENABLED=false` to receive a
-clear "OCR unavailable" error instead of an empty extraction.
 
 ### The extraction warning says no LLM provider is configured
 
@@ -1134,10 +1172,10 @@ the database and upload volumes — use it only when you intend to lose data.
   revision checks, and revision approval guards prevent silent overwrites.
 - **No frontend build chain.** The UI is intentionally boring to deploy: static
   files served by the API.
-- **Graceful degradation.** Missing OCR, missing LLM, provider failure, or
+- **Graceful degradation.** Missing LLM, provider failure, or
   insufficient capacity all produce actionable warnings instead of crashes.
 - **Local-first defaults.** SQLite and rule-based extraction work with no
-  external services; PostgreSQL, LLM, and OCR are opt-in.
+  external services; PostgreSQL and LLM are opt-in.
 
 ## Current limitations and possible next steps
 
@@ -1149,6 +1187,8 @@ Current scope and known limitations:
   policy.
 - The rate limiter is in-process, so it is not shared across replicas.
 - Extraction is synchronous; very large documents hold the request open.
+- Scanned/image-only PDFs are not supported: extraction reads the embedded text
+  layer only and does not run OCR.
 - No drag-and-drop manual timetable editing (changes go through recalculation).
 - No SSO/SAML, multi-tenant organizations, or admin console.
 - No iCal/ICS export or LMS integration.

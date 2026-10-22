@@ -48,6 +48,23 @@ export function shortDate(value, tz) {
   return p ? `${p.day} ${p.month}` : "—";
 }
 
+/**
+ * Formatting a calendar date (YYYY-MM-DD) in a real timezone shifts it by a day
+ * for any course west of UTC, because the bare date parses as UTC midnight.
+ * Date-only values are therefore formatted as the calendar date they are.
+ */
+function dateOnly(value) {
+  return typeof value === "string" ? value.slice(0, 10) : value;
+}
+
+export function dateOnlyLabel(value) {
+  return value ? dateLabel(dateOnly(value), "UTC") : "—";
+}
+
+export function shortDateOnly(value) {
+  return value ? shortDate(dateOnly(value), "UTC") : "—";
+}
+
 /** ISO calendar date (YYYY-MM-DD) as seen in the given timezone. */
 export function isoDate(value, tz) {
   const p = parts(value, tz, { year: "numeric", month: "2-digit", day: "2-digit" });

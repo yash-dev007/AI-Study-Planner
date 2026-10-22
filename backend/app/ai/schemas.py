@@ -57,9 +57,19 @@ class ExtractedUnit(BaseModel):
 
 class SyllabusExtraction(BaseModel):
     units: list[ExtractedUnit] = Field(min_length=1)
+    # Warnings and provider are server-owned labels; they are normalized (and, for
+    # provider output, replaced) so untrusted text cannot be smuggled to the UI.
     warnings: list[str] = Field(default_factory=list)
-    provider: str = "rule_based"
+    provider: str = Field(default="rule_based", max_length=64)
     confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+
+    @field_validator("warnings", mode="before")
+    @classmethod
+    def clean_warnings(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return []
+        cleaned = [str(item).strip()[:500] for item in value if str(item).strip()]
+        return cleaned[:50]
 
     @field_validator("units")
     @classmethod

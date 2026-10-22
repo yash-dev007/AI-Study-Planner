@@ -6,9 +6,10 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.entities import CourseStatus, ExceptionType
+from app.schemas.auth import validate_timezone
 
 DEFAULT_TIMEZONE = "UTC"
 
@@ -94,6 +95,11 @@ class CourseCreate(BaseModel):
     exceptions: list[CalendarExceptionInput] = Field(default_factory=list)
     settings: CourseSettings = Field(default_factory=CourseSettings)
 
+    @field_validator("timezone")
+    @classmethod
+    def timezone_exists(cls, value: str) -> str:
+        return validate_timezone(value)
+
     @model_validator(mode="after")
     def validate_dates(self) -> CourseCreate:
         if self.end_date < self.start_date:
@@ -117,7 +123,7 @@ class CourseUpdate(BaseModel):
     end_date: date | None = None
     target_completion_date: date | None = None
     total_available_minutes: int | None = Field(default=None, gt=0)
-    timezone: str | None = None
+    timezone: str | None = Field(default=None, max_length=64)
     lecture_duration_minutes: int | None = Field(default=None, ge=15, le=300)
     total_weeks: int | None = Field(default=None, ge=1, le=52)
     status: CourseStatus | None = None
@@ -125,6 +131,36 @@ class CourseUpdate(BaseModel):
     version: int | None = Field(
         default=None, description="Required to update a course that already has a schedule."
     )
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_exists(cls, value: str | None) -> str | None:
+        return None if value is None else validate_timezone(value)
+
+    @model_validator(mode="after")
+    def reject_null_fields(self) -> CourseUpdate:
+        """Explicit ``null`` is only valid for the nullable columns."""
+
+        required = (
+            "name",
+            "department",
+            "semester",
+            "academic_year",
+            "start_date",
+            "end_date",
+            "timezone",
+            "lecture_duration_minutes",
+            "total_weeks",
+            "status",
+        )
+        nulls = sorted(
+            field
+            for field in required
+            if field in self.model_fields_set and getattr(self, field) is None
+        )
+        if nulls:
+            raise ValueError("These fields cannot be null: " + ", ".join(nulls))
+        return self
 
 
 class CourseRead(BaseModel):

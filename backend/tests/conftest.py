@@ -98,6 +98,27 @@ class MockLLMInterpreter:
             confidence=0.9,
         )
 
+    def refine(self, current: SyllabusExtraction, prompt: str) -> SyllabusExtraction:
+        self.calls.append(prompt)
+        if self.mode == "raise":
+            from app.ai.llm import LLMError
+
+            raise LLMError("provider unavailable")
+        if self.mode == "boom":
+            raise RuntimeError("provider crashed in an unexpected way")
+        if self.mode == "malformed":
+            raise ValueError("could not parse provider payload")
+
+        # Create a modified copy reflecting the prompt instruction
+        cloned_units = [unit.model_copy(deep=True) for unit in current.units]
+        if cloned_units and cloned_units[0].topics:
+            prefix = cloned_units[0].topics[0].title
+            cloned_units[0].topics[0].title = f"{prefix} (Prompted: {prompt[:30]})"
+        return SyllabusExtraction(
+            units=cloned_units,
+            confidence=0.95,
+        )
+
 
 @pytest.fixture()
 def mock_llm() -> MockLLMInterpreter:

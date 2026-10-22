@@ -168,6 +168,11 @@ def update_lecture_status(
         and not payload.delivered_minutes
     ):
         return session, None, warnings, "The lecture already has this status."
+    if target == session.status == SessionStatus.COMPLETED and not payload.delivered_minutes:
+        # Re-sending the same report must not rewrite history: without explicit
+        # minutes the recorded partial delivery would silently become full
+        # delivery and inflate progress (I4/I6).
+        return session, None, warnings, "The lecture is already recorded as completed."
 
     delivered = (
         {item.topic_id: item.minutes for item in payload.delivered_minutes}

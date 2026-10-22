@@ -1,7 +1,7 @@
 /** Sign in / create account. */
 
 import { ApiError, api, session } from "../api.js";
-import { el, field, input, mount, notice, select } from "../dom.js";
+import { el, field, input, mount, notice } from "../dom.js";
 
 export async function render(ctx, mode = "login") {
   const isRegister = mode === "register";
@@ -46,20 +46,6 @@ export async function render(ctx, mode = "login") {
       isRegister ? "At least 8 characters." : null,
     ),
   );
-  if (isRegister) {
-    fields.push(
-      field(
-        "Role",
-        select(
-          [
-            { value: "professor", label: "Professor" },
-            { value: "admin", label: "Administrator" },
-          ],
-          { name: "role", value: "professor" },
-        ),
-      ),
-    );
-  }
 
   const form = el(
     "form",
@@ -86,16 +72,16 @@ export async function render(ctx, mode = "login") {
             name: data.name,
             email: data.email,
             password: data.password,
-            role: data.role || "professor",
+            role: "professor",
           })
         : await api.login(data.email, data.password);
-      session.save(result.access_token, result.user);
+      session.save(result.user);
       ctx.navigate("#/courses");
     } catch (error) {
       errorBox.hidden = false;
       mount(
         errorBox,
-        error instanceof ApiError && error.code === "EMAIL_TAKEN"
+        error instanceof ApiError && error.code === "EMAIL_ALREADY_REGISTERED"
           ? notice("warn", "That email is already registered.", el("p", { text: "Sign in instead." }))
           : notice(
               "danger",

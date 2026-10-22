@@ -45,7 +45,13 @@ def get_current_user(
     except (KeyError, ValueError) as exc:
         raise UnauthorizedError("Invalid authentication token.", code="INVALID_TOKEN") from exc
     user = get_user(db, user_id)
-    if int(payload.get("ver", 0)) != int(user.token_version):
+    try:
+        token_version = int(payload.get("ver", 0))
+    except (TypeError, ValueError) as exc:
+        # A malformed claim (for example ``"ver": null``) is a bad token, not
+        # a server error.
+        raise UnauthorizedError("Invalid authentication token.", code="INVALID_TOKEN") from exc
+    if token_version != int(user.token_version):
         raise UnauthorizedError(
             "This session was signed out by a password change. Please sign in again.",
             code="TOKEN_REVOKED",

@@ -96,6 +96,110 @@ Single source of truth for phase progress. Update after every gate.
 - Deferred by scope: `POST /settings/test-email` and weekly-summary sending
   belong to Phase 10; `POST /settings/test-ai` belongs to Phase 5.
 
+## Full-project audit gate — 2026-10-20
+
+Five parallel audit teams reviewed security, scheduling, data integrity, AI and
+document ingestion, and the frontend. Every fix is pinned by a regression test;
+the new suites are `test_audit_security.py` (29), `test_audit_scheduler.py` (19),
+`test_audit_data.py` (10), `test_audit_ai.py` (37), and
+`test_audit_integration.py` (11).
+
+- Security: professor-only registration (`403 ROLE_NOT_ALLOWED`); CSRF bypass via
+  malformed `Authorization` closed; spoofable `X-Forwarded-For` no longer trusted
+  by default; production refuses the default/weak JWT secret and unsupported
+  algorithms; malformed `ver` claims return `401`; rate-limiter state is
+  bounded; change-password is throttled; DB log parameters are redacted; login
+  timing is equalized; logout clears cookies with the same attributes; IPv6
+  origins normalize correctly.
+- Scheduler: DST spring-forward can no longer double-book one instant; repeated
+  completion reports no longer inflate delivered minutes; calendar days,
+  dashboard counters, at-risk dates, and lecture filters use the course
+  timezone; dashboard free capacity is computed from real slots and occupied
+  intervals instead of counting whole blocked days; projected-completion
+  warnings use the course calendar day.
+- Data: replacing a syllabus can no longer delete topics whose allocations carry
+  recorded history (`409 SYLLABUS_HAS_HISTORY`); partial structure saves keep
+  omitted rows on positive, contiguous sequence numbers; topic reordering no
+  longer collides with the unique constraint; explicit `null` on NOT NULL
+  fields is a `422`; cross-course syllabus ids return `404`; archived units are
+  excluded from new plans; prerequisite lookup is one query; course
+  `target_completion_date` is validated on update.
+- AI/ingestion: Gemini keys travel in a header and are redacted from errors; env
+  writes are skipped under `APP_ENV=test` and atomic with mode `0600`; control
+  characters in provider metadata are rejected; DOCX zip bombs and oversized
+  PDFs are refused; BOM handling covers UTF-32; provider schemas are strict and
+  bounded; fenced JSON is parsed; warnings are deterministic and
+  provider-authored warnings are not surfaced.
+- Frontend: sessions use the HttpOnly cookie (no bearer token in localStorage);
+  route gating hydrates from `GET /auth/me`; logout calls the API; the UI reads
+  `planned_minutes` / `actual_minutes`; unsupported extraction columns and the
+  misleading "Publish immediately" control were removed; modal double-submit,
+  focus trap, skip-link routing, timer leak, and ARIA labels were fixed.
+- Integration: `LLM_PROVIDER=none` disables AI even with a key present; ownership
+  failures return `404`; `/health` no longer leaks `storage_dir`; course
+  timezones are validated; `auto_publish` was removed from generate/recalculate
+  so approval remains explicit; AI is opt-in per teacher; uploads are size
+  checked while reading; refine payloads are bounded; prerequisite validation is
+  order-independent; production refuses UI writes of server AI keys
+  (`403 AI_CONFIG_UI_DISABLED`); only `backend/.env` is loaded, so a root
+  Compose `.env` can no longer override keys saved from the Settings UI. OCR was
+  already absent from the working tree
+  and is now removed from docs, Compose, the Dockerfile, and `pyproject.toml`.
+- Gate: `.venv/bin/python -m pytest` → **279 passed**;
+  `.venv/bin/ruff check app tests` → clean;
+  `.venv/bin/python -m mypy app` → clean (59 files; the `.venv/bin/mypy` shim
+  has a stale mount-path shebang, so the module form is the working command);
+  `alembic upgrade head` → `downgrade base` on a temporary SQLite database →
+  clean; every `frontend/js/**/*.js` module parses with
+  `node --input-type=module --check`.
+- Reported but not changed (need a product decision): `DELETE /courses/{id}`
+  still cascade-deletes closed history; `duration_locked` is not enforced; a
+  lecture can be completed before its scheduled date; revision-change dates in
+  history use UTC instants; `idempotency_key` is stored but unused; and
+  `POST /settings/ai-config` remains a development-only, server-wide key writer.
+  There is also no admin provisioning path after registration was restricted to
+  professors.
+
+## Reported runtime fixes — 2026-10-20
+
+- **Delete returned `405`:** the running Docker `api` image predated the new
+  `DELETE /courses/{id}` route. Rebuilding `api` registered the route; a live
+  delete returned `200` and the OpenAPI schema now lists `delete`, `get`,
+  `patch`. No database volume was reset.
+- **AI save failed in production:** this is intentional. Production keys are
+  environment-only, so `POST /settings/ai-config` returns
+  `403 AI_CONFIG_UI_DISABLED`. `GET /settings` now exposes
+  `ai_config_writable`; when it is `false` the UI hides the key form and offers
+  per-teacher enablement, provider, and model through `PUT /settings`. The
+  syllabus page shows whether AI is unavailable, available but disabled, or
+  enabled for the teacher instead of claiming AI is active.
+- **Docker AI configuration:** Compose now forwards `OPENROUTER_MODEL`,
+  `GEMINI_API_KEY`, `GEMINI_MODEL`, and `OLLAMA_MODEL`. Operators set
+  `LLM_PROVIDER` and the matching key in the repository-root `.env`, then run
+  `docker compose up -d api`. The container does not read host `backend/.env`.
+- **Syllabus structure could not be saved:** the extraction preview now repeats
+  the `Confirm syllabus` action below the topic table so it is reachable after a
+  long review. The confirmed-structure view has an `Edit structure` mode with
+  add-unit/add-topic controls and a real `Save structure` button backed by
+  `PUT /courses/{id}/syllabus`; deletes still go through the history-guarded
+  `DELETE` endpoints. No fake local-only save was added.
+- **Confirming the syllabus left Schedule empty:** confirmation persisted the
+  structure but did not create a timetable, and the empty Schedule state linked
+  back to the syllabus instead of generating. Confirmation now generates a
+  pending timetable proposal with the course's default strategy before
+  navigating to Schedule. If generation cannot run, the error is surfaced and
+  the Schedule empty state's primary action is `Generate schedule`.
+- Gate: `.venv/bin/python -m pytest` → **279 passed**;
+  `.venv/bin/ruff check app tests` → clean;
+  `.venv/bin/python -m mypy app` → clean (59 files); every frontend module
+  parses; `docker compose config --quiet` → valid; rebuilt container `/health`
+  → `200` in production with AI disabled. Live `GET /settings` for a fresh
+  professor reported `ai_config_writable=false`, and the running OpenAPI schema
+  includes `ai_config_writable` plus `PUT /courses/{course_id}/syllabus`.
+- New regression assertions cover the production `ai_config_writable=false`
+  response and the ability to opt in through `PUT /settings` without handling
+  the provider secret.
+
 ## Known limitations (tracked)
 
 - Password reset is not implemented; document in Phase 13.

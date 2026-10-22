@@ -719,7 +719,7 @@ def test_course_update_requires_the_current_version(
     assert stale.json()["error"]["code"] == "COURSE_VERSION_CONFLICT"
 
 
-def test_unauthorized_course_access_is_forbidden(
+def test_unauthorized_course_access_is_not_found(
     client: TestClient,
     course_id: str,
     professor_headers: dict[str, str],
@@ -733,8 +733,10 @@ def test_unauthorized_course_access_is_forbidden(
     ]
     for url in urls:
         response = client.get(url, headers=other_professor_headers)
-        assert response.status_code == 403, url
-        assert response.json()["error"]["code"] == "COURSE_FORBIDDEN"
+        # I7: another teacher's course must not be distinguishable from a
+        # missing one.
+        assert response.status_code == 404, url
+        assert response.json()["error"]["code"] == "COURSE_NOT_FOUND"
 
     # Phase 2: registration also stores a session cookie, so a truly
     # anonymous request must start from a clean cookie jar.
@@ -1185,3 +1187,92 @@ def test_course_dates_are_validated(client: TestClient, professor_headers: dict[
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
     assert response.json()["error"]["details"]["problems"]
+
+
+def test_syllabus_text_upload_extracts_structure(
+    client: TestClient, course_id: str, professor_headers: dict[str, str]
+) -> None:
+    text = (
+        "Unit 1: Introduction to Operating Systems\n"
+        "Topic 1: Overview of Operating Systems (60 min)\n"
+        "Topic 2: Kernel architectures and system calls (90 min)\n"
+        "Unit 2: Process Scheduling\n"
+        "Topic 1: CPU Scheduling Algorithms (120 min)\n"
+    )
+    response = client.post(
+        f"{API}/courses/{course_id}/syllabus/text",
+        json={"title": "OS Syllabus", "text": text},
+        headers=professor_headers,
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["stats"]["unit_count"] >= 1
+    assert body["stats"]["topic_count"] >= 2
+    assert body["document"]["filename"] == "OS_Syllabus.txt"
+
+    # Verify document listed
+    docs = client.get(f"{API}/courses/{course_id}/syllabus", headers=professor_headers)
+    assert docs.status_code == 200
+    assert any(doc["id"] == body["document"]["id"] for doc in docs.json())
+
+
+def test_syllabus_prompt_refine_without_ai_returns_clear_error(
+    client: TestClient, course_id: str, professor_headers: dict[str, str]
+) -> None:
+    text = "Unit 1: Foundations\nTopic 1: Intro (60 min)\n"
+    res = client.post(
+        f"{API}/courses/{course_id}/syllabus/text",
+        json={"title": "Foundations", "text": text},
+        headers=professor_headers,
+    )
+    assert res.status_code == 201
+    doc_id = res.json()["document"]["id"]
+
+    refine_res = client.post(
+        f"{API}/courses/{course_id}/syllabus/documents/{doc_id}/refine",
+        json={"prompt": "Split topic 1 into two 30-minute lectures"},
+        headers=professor_headers,
+    )
+    # Since LLM is not configured in this test environment, expect 422 with AI_NOT_CONFIGURED
+    assert refine_res.status_code == 422
+    assert refine_res.json()["error"]["code"] == "AI_NOT_CONFIGURED"
+
+
+def test_syllabus_text_and_refine_ownership_isolation(
+    client: TestClient, course_id: str, other_professor_headers: dict[str, str]
+) -> None:
+    # Another professor cannot upload text to this course
+    upload_res = client.post(
+        f"{API}/courses/{course_id}/syllabus/text",
+        json={"title": "Hacked", "text": "Unit 1: Test\nTopic 1: Test\n"},
+        headers=other_professor_headers,
+    )
+    assert upload_res.status_code == 404
+    assert upload_res.json()["error"]["code"] == "COURSE_NOT_FOUND"
+
+
+def test_delete_course_and_cascades(
+    client: TestClient, course_id: str, professor_headers: dict[str, str]
+) -> None:
+    # Course exists initially
+    get_res = client.get(f"{API}/courses/{course_id}", headers=professor_headers)
+    assert get_res.status_code == 200
+
+    # Delete course
+    del_res = client.delete(f"{API}/courses/{course_id}", headers=professor_headers)
+    assert del_res.status_code == 200
+    assert "deleted" in del_res.json()["message"]
+
+    # Verify course is now 404
+    get_after = client.get(f"{API}/courses/{course_id}", headers=professor_headers)
+    assert get_after.status_code == 404
+    assert get_after.json()["error"]["code"] == "COURSE_NOT_FOUND"
+
+
+def test_delete_course_ownership_isolation(
+    client: TestClient, course_id: str, other_professor_headers: dict[str, str]
+) -> None:
+    # Another professor cannot delete this course
+    del_res = client.delete(f"{API}/courses/{course_id}", headers=other_professor_headers)
+    assert del_res.status_code == 404
+    assert del_res.json()["error"]["code"] == "COURSE_NOT_FOUND"
